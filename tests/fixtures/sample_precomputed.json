@@ -1,0 +1,31 @@
+{
+  "metadata": {
+    "duration_sec": 6.0,
+    "fps": 30,
+    "resolution": "1920x1080",
+    "frame_count": 180,
+    "has_audio": false
+  },
+  "tracks": [
+    {
+      "id": "B",
+      "object_type": "승용차",
+      "movement_candidate": "차로변경_좌"
+    }
+  ],
+  "event_candidates": [
+    {
+      "time": "00:05.800",
+      "event_type": "접촉",
+      "actors": [
+        "ego_vehicle",
+        "B"
+      ],
+      "confidence": "medium",
+      "signals": [
+        "bbox_overlap",
+        "camera_shake"
+      ]
+    }
+  ]
+}

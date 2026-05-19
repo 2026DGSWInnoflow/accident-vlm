@@ -1,0 +1,55 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "accident-vlm"
+version = "0.1.0"
+description = "Accident video fact extraction pipeline for evidence-linked JSON."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2.7",
+    "opencv-python>=4.9",
+    "numpy>=1.26",
+    "typer>=0.12",
+    "rich>=13.7",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "python-multipart>=0.0.9",
+]
+
+[project.optional-dependencies]
+ocr = [
+    "easyocr>=1.7",
+    "paddleocr>=2.7",
+    "pytesseract>=0.3.10",
+]
+cv = [
+    "ultralytics>=8.2",
+    "scipy>=1.11",
+]
+vlm = [
+    "torch>=2.2",
+    "transformers>=4.45",
+    "accelerate>=0.33",
+    "pillow>=10.0",
+]
+dev = [
+    "pytest>=8.2",
+    "ruff>=0.4",
+]
+
+[project.scripts]
+accident-vlm = "accident_vlm.cli:app"
+accident-vlm-api = "accident_vlm.server.main:run"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

@@ -1,0 +1,106 @@
+# Accident VLM
+
+Accident VLM is a video fact extraction pipeline that produces objective,
+evidence-linked JSON for RAG workflows.
+
+The pipeline records observable facts and supporting evidence. It does not
+determine legal liability, fault, violations, offenders, or victims.
+
+## Server Setup
+
+Install the core package:
+
+```bash
+pip install -e .
+```
+
+Install optional runtime groups on the server as needed:
+
+```bash
+pip install -e ".[ocr,cv,vlm]"
+```
+
+## Commands
+
+Generate the full pre-VLM evidence package:
+
+```bash
+accident-vlm analyze input.mp4 outputs/pre_vlm_context.json \
+  --ocr-backend auto \
+  --detector ultralytics \
+  --detector-model yolov8x.pt
+```
+
+Generate pre-VLM evidence and final Qwen-composed accident facts:
+
+```bash
+accident-vlm analyze-full input.mp4 \
+  --pre-vlm-output outputs/pre_vlm_context.json \
+  --final-output outputs/accident_facts.json \
+  --ocr-backend auto \
+  --detector ultralytics \
+  --detector-model yolov8x.pt \
+  --qwen-model Qwen/Qwen3.6-27B \
+  --device auto
+```
+
+The final JSON is still evidence constrained: unsupported facts must remain
+`확인불가`, and legal judgment terms are sanitized before output.
+
+## API Server
+
+Run the API server:
+
+```bash
+accident-vlm-api
+```
+
+or:
+
+```bash
+uvicorn accident_vlm.server.app:app --host 0.0.0.0 --port 8000
+```
+
+Health check:
+
+```bash
+curl http://localhost:8000/health
+```
+
+Start a job from a video path already on the server:
+
+```bash
+curl -X POST http://localhost:8000/v1/jobs/from-path \
+  -H "Content-Type: application/json" \
+  -d '{
+    "video_path": "/data/accidents/sample.mp4",
+    "options": {
+      "mode": "pre_vlm",
+      "ocr_backend": "auto",
+      "object_detector_backend": "ultralytics",
+      "object_detector_model": "yolov8x.pt"
+    }
+  }'
+```
+
+Upload a video and start a full Qwen job:
+
+```bash
+curl -X POST http://localhost:8000/v1/jobs/upload \
+  -F "file=@sample.mp4" \
+  -F "mode=full" \
+  -F "ocr_backend=auto" \
+  -F "object_detector_backend=ultralytics" \
+  -F "object_detector_model=yolov8x.pt" \
+  -F "qwen_model_id=Qwen/Qwen3.6-27B" \
+  -F "device=auto"
+```
+
+Check status and fetch result:
+
+```bash
+curl http://localhost:8000/v1/jobs/{job_id}
+curl http://localhost:8000/v1/jobs/{job_id}/result
+```
+
+Jobs are stored under `outputs/api_jobs/{job_id}` with intermediate and final JSON files.
