@@ -1,3 +1,5 @@
+from copy import deepcopy
+
 from accident_vlm.schemas.final_output import AccidentFactOutput
 
 
@@ -14,6 +16,38 @@ FORBIDDEN_LEGAL_TERMS = [
 ]
 
 LEGAL_JUDGMENT_REPLACEMENT = "[법적 판단 표현 제거]"
+
+STATUS_SYNONYMS = {
+    "confirmed": "observed",
+    "detected": "observed",
+    "visible": "observed",
+    "observed": "observed",
+    "computed": "computed",
+    "estimated": "computed",
+    "inferred": "inferred",
+    "unknown": "unknown",
+    "확인불가": "unknown",
+}
+
+
+def normalize_vlm_payload(payload: dict) -> dict:
+    normalized = deepcopy(payload)
+
+    def visit(value):
+        if isinstance(value, dict):
+            status = value.get("status")
+            if isinstance(status, str):
+                mapped = STATUS_SYNONYMS.get(status.strip().lower())
+                if mapped is not None:
+                    value["status"] = mapped
+            for child in value.values():
+                visit(child)
+        elif isinstance(value, list):
+            for child in value:
+                visit(child)
+
+    visit(normalized)
+    return normalized
 
 
 def _matched_spans(text: str) -> list[tuple[int, int, str]]:
@@ -63,7 +97,7 @@ def sanitize_summary(text: str) -> str:
 
 
 def validate_final_output(payload: dict) -> AccidentFactOutput:
-    output = AccidentFactOutput.model_validate(payload)
+    output = AccidentFactOutput.model_validate(normalize_vlm_payload(payload))
     forbidden = find_forbidden_terms(output.objective_summary)
     if not forbidden:
         return output

@@ -1,4 +1,7 @@
+import ast
 import json
+import os
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -13,7 +16,34 @@ Compose objective accident facts from the supplied evidence only.
 Do not determine fault ratio, legal violation, negligence, offender, or victim.
 Mark unsupported fields as 확인불가.
 Every important event must include confidence and evidence.
+Return a single valid JSON object. Do not include markdown, prose, or reasoning.
 """.strip()
+
+OUTPUT_TEMPLATE = {
+    "schema_version": "accident_video_facts.v1",
+    "input_quality": {},
+    "scene_type": {
+        "value": "확인불가",
+        "status": "unknown",
+        "confidence": "unknown",
+        "source": [],
+        "evidence": [],
+        "note": "영상에서 확인되지 않음",
+    },
+    "road_conditions": {},
+    "traffic_control": {},
+    "actors": [],
+    "timeline": [],
+    "collision": {},
+    "speed_and_distance": {},
+    "uncertainties": [],
+    "evidence_index": {},
+    "rag_hints": {
+        "accident_type": "확인불가",
+        "scenario_keywords": [],
+    },
+    "objective_summary": "확인 가능한 객관 사실이 제한적임.",
+}
 
 
 def build_vlm_prompt(context: PipelineContext) -> str:
@@ -25,7 +55,9 @@ def build_vlm_prompt(context: PipelineContext) -> str:
     )
     return (
         f"{SYSTEM_PROMPT}\n\n"
-        "Return only JSON matching schema_version accident_video_facts.v1.\n\n"
+        "Return only JSON matching this exact shape. Keep enum-like values in Korean "
+        "when they are visible; use 확인불가/unknown when unsupported.\n"
+        f"{json.dumps(OUTPUT_TEMPLATE, ensure_ascii=False, indent=2)}\n\n"
         "Evidence package:\n"
         f"{evidence_package_json}"
     )
@@ -46,6 +78,15 @@ def compose_with_backend(context: PipelineContext, backend: VLMBackend) -> dict[
     return backend.generate_json(prompt=prompt, image_paths=image_paths)
 
 
+def render_qwen_chat_template(processor: Any, messages: list[dict[str, Any]]) -> str:
+    return processor.apply_chat_template(
+        messages,
+        tokenize=False,
+        add_generation_prompt=True,
+        enable_thinking=False,
+    )
+
+
 class TransformersQwenBackend:
     def __init__(self, model_id: str, device: str = "auto") -> None:
         try:
@@ -59,8 +100,11 @@ class TransformersQwenBackend:
         self._model = AutoModelForImageTextToText.from_pretrained(
             model_id,
             device_map=device,
+            dtype="auto",
+            low_cpu_mem_usage=True,
             trust_remote_code=True,
         )
+        self._model.eval()
 
     def generate_json(self, prompt: str, image_paths: list[str]) -> dict[str, Any]:
         images = [self._image_cls.open(path).convert("RGB") for path in image_paths]
@@ -73,22 +117,35 @@ class TransformersQwenBackend:
                 ],
             }
         ]
-        text = self._processor.apply_chat_template(
-            messages,
-            tokenize=False,
-            add_generation_prompt=True,
-        )
+        text = render_qwen_chat_template(self._processor, messages)
         inputs = self._processor(text=[text], images=images or None, return_tensors="pt")
         inputs = inputs.to(self._model.device)
-        generated_ids = self._model.generate(**inputs, max_new_tokens=4096)
+        max_new_tokens = int(os.getenv("ACCIDENT_VLM_MAX_NEW_TOKENS", "4096"))
+        try:
+            import torch  # type: ignore
+
+            with torch.inference_mode():
+                generated_ids = self._model.generate(
+                    **inputs,
+                    max_new_tokens=max_new_tokens,
+                    do_sample=False,
+                    use_cache=True,
+                )
+        except ImportError:
+            generated_ids = self._model.generate(
+                **inputs,
+                max_new_tokens=max_new_tokens,
+                do_sample=False,
+                use_cache=True,
+            )
         generated_text = self._processor.batch_decode(
             generated_ids[:, inputs.input_ids.shape[1] :],
             skip_special_tokens=True,
         )[0]
-        return _parse_json_response(generated_text)
+        return parse_json_response(generated_text)
 
 
-def _parse_json_response(text: str) -> dict[str, Any]:
+def parse_json_response(text: str) -> dict[str, Any]:
     stripped = text.strip()
     if stripped.startswith("```"):
         stripped = stripped.strip("`")
@@ -98,11 +155,26 @@ def _parse_json_response(text: str) -> dict[str, Any]:
     end = stripped.rfind("}")
     if start == -1 or end == -1 or end <= start:
         raise ValueError("VLM response did not contain a JSON object")
-    return json.loads(stripped[start : end + 1])
+    candidate = stripped[start : end + 1]
+    try:
+        return json.loads(candidate)
+    except json.JSONDecodeError:
+        parsed = ast.literal_eval(candidate)
+        if not isinstance(parsed, dict):
+            raise ValueError("VLM response JSON root was not an object")
+        return parsed
+
+
+_parse_json_response = parse_json_response
+
+
+@lru_cache(maxsize=2)
+def get_qwen_backend(model_id: str, device: str = "auto") -> VLMBackend:
+    return TransformersQwenBackend(model_id, device=device)
 
 
 def create_qwen_backend(config: PipelineConfig) -> VLMBackend:
-    return TransformersQwenBackend(config.qwen_model_id, device=config.device)
+    return get_qwen_backend(config.qwen_model_id, config.device)
 
 
 def compose_final_facts(

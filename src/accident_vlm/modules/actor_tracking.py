@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Protocol
 
@@ -66,6 +67,7 @@ class UltralyticsDetector:
         return detections
 
 
+@lru_cache(maxsize=8)
 def create_object_detector(backend: str, model_name: str) -> ObjectDetector:
     if backend in {"none", "disabled"}:
         return NoObjectDetector()

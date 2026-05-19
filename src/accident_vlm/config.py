@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 class PipelineConfig(BaseModel):
     output_dir: Path = Path("outputs")
     regular_frame_interval_sec: float = Field(default=1.0, gt=0)
+    max_selected_frames: int = Field(default=16, gt=0)
     pre_event_window_sec: float = Field(default=5.0, gt=0)
     post_event_window_sec: float = Field(default=3.0, gt=0)
     enable_ocr: bool = True
@@ -22,6 +23,6 @@ class PipelineConfig(BaseModel):
     ocr_backend: str = "auto"
     object_detector_backend: str = "none"
     object_detector_model: str = "yolov8x.pt"
-    qwen_model_id: str = "Qwen/Qwen3.6-27B"
+    qwen_model_id: str = "/home/minsung0830/accident-vlm/models/Qwen3.6-27B"
     device: str = "auto"
     lane_width_m: float = Field(default=3.2, gt=0)

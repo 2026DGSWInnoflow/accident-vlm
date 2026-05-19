@@ -5,7 +5,7 @@ import traceback
 from pathlib import Path
 
 from accident_vlm.config import PipelineConfig
-from accident_vlm.modules.vlm_composer import compose_final_facts, create_qwen_backend, write_final_facts
+from accident_vlm.modules.vlm_composer import compose_final_facts, get_qwen_backend, write_final_facts
 from accident_vlm.pipeline import analyze_video_pre_vlm
 from accident_vlm.server.job_store import JobStore
 from accident_vlm.server.schemas import AnalysisMode, AnalysisOptions
@@ -15,6 +15,7 @@ def config_from_options(options: AnalysisOptions, output_dir: Path) -> PipelineC
     return PipelineConfig(
         output_dir=output_dir,
         regular_frame_interval_sec=options.regular_frame_interval_sec,
+        max_selected_frames=options.max_selected_frames,
         ocr_backend=options.ocr_backend,
         object_detector_backend=options.object_detector_backend,
         object_detector_model=options.object_detector_model,
@@ -45,7 +46,7 @@ def run_analysis_job(
 
         final_path: Path | None = None
         if options.mode == AnalysisMode.FULL:
-            backend = create_qwen_backend(config)
+            backend = get_qwen_backend(config.qwen_model_id, config.device)
             final_facts = compose_final_facts(context, backend)
             write_final_facts(final_facts, final_output_path)
             final_path = final_output_path

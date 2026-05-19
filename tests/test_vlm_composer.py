@@ -2,6 +2,9 @@ from accident_vlm.modules.vlm_composer import (
     SYSTEM_PROMPT,
     build_vlm_prompt,
     compose_with_backend,
+    get_qwen_backend,
+    parse_json_response,
+    render_qwen_chat_template,
 )
 from accident_vlm.schemas.preprocessing import PipelineContext
 
@@ -54,3 +57,60 @@ def test_compose_with_backend_sends_prompt_and_truthy_frame_paths() -> None:
     assert result == {"schema_version": "accident_video_facts.v1"}
     assert backend.prompt == build_vlm_prompt(context)
     assert backend.image_paths == ["/tmp/frame-1.jpg", "/tmp/frame-4.jpg"]
+
+
+def test_parse_json_response_accepts_python_style_object() -> None:
+    assert parse_json_response("{'schema_version': 'accident_video_facts.v1'}") == {
+        "schema_version": "accident_video_facts.v1"
+    }
+
+
+def test_get_qwen_backend_reuses_instances(monkeypatch) -> None:
+    created = []
+
+    class FakeQwenBackend:
+        def __init__(self, model_id: str, device: str = "auto") -> None:
+            created.append((model_id, device))
+
+    monkeypatch.setattr(
+        "accident_vlm.modules.vlm_composer.TransformersQwenBackend",
+        FakeQwenBackend,
+    )
+    get_qwen_backend.cache_clear()
+
+    first = get_qwen_backend("Qwen/test", "auto")
+    second = get_qwen_backend("Qwen/test", "auto")
+
+    assert first is second
+    assert created == [("Qwen/test", "auto")]
+
+
+def test_build_vlm_prompt_includes_output_template_contract() -> None:
+    context = PipelineContext(
+        video_path="sample.mp4",
+        evidence_package={"frames": [], "precomputed_facts": {}},
+    )
+
+    prompt = build_vlm_prompt(context)
+
+    assert '"scene_type"' in prompt
+    assert '"rag_hints"' in prompt
+    assert '"objective_summary"' in prompt
+    assert "Do not include markdown, prose, or reasoning" in prompt
+
+
+def test_render_qwen_chat_template_disables_thinking() -> None:
+    class FakeProcessor:
+        def __init__(self) -> None:
+            self.kwargs = None
+
+        def apply_chat_template(self, messages, **kwargs):
+            self.kwargs = kwargs
+            return "rendered"
+
+    processor = FakeProcessor()
+
+    assert render_qwen_chat_template(processor, [{"role": "user", "content": []}]) == "rendered"
+    assert processor.kwargs["enable_thinking"] is False
+    assert processor.kwargs["add_generation_prompt"] is True
+    assert processor.kwargs["tokenize"] is False

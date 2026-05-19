@@ -12,7 +12,10 @@ def _floor_decimal(value: Decimal) -> int:
 
 
 def select_regular_frames(
-    duration_sec: float, fps: float, interval_sec: float
+    duration_sec: float,
+    fps: float,
+    interval_sec: float,
+    max_frames: int | None = None,
 ) -> list[SelectedFrame]:
     if duration_sec < 0:
         raise ValueError("duration_sec must be non-negative")
@@ -20,6 +23,8 @@ def select_regular_frames(
         raise ValueError("fps must be positive")
     if interval_sec <= 0:
         raise ValueError("interval_sec must be positive")
+    if max_frames is not None and max_frames <= 0:
+        raise ValueError("max_frames must be positive")
 
     frames: list[SelectedFrame] = []
     seen_frame_indices: set[int] = set()
@@ -44,6 +49,15 @@ def select_regular_frames(
                 purpose="regular_context",
             )
         )
+
+    if max_frames is not None and len(frames) > max_frames:
+        if max_frames == 1:
+            return [frames[0]]
+        last_index = len(frames) - 1
+        selected_indices = {
+            round(index * last_index / (max_frames - 1)) for index in range(max_frames)
+        }
+        return [frame for index, frame in enumerate(frames) if index in selected_indices]
 
     return frames
 

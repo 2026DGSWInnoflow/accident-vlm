@@ -43,6 +43,17 @@ def test_select_regular_frames_zero_duration_returns_only_frame_zero() -> None:
     assert [frame.frame_index for frame in frames] == [0]
 
 
+def test_select_regular_frames_evenly_limits_frame_count() -> None:
+    frames = select_regular_frames(
+        duration_sec=9,
+        fps=10,
+        interval_sec=1.0,
+        max_frames=4,
+    )
+
+    assert [frame.frame_index for frame in frames] == [0, 30, 60, 90]
+
+
 @pytest.mark.parametrize(
     "duration_sec, fps, interval_sec",
     [

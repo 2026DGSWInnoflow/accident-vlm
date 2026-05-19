@@ -24,9 +24,10 @@ class AnalysisOptions(BaseModel):
     ocr_backend: str = "auto"
     object_detector_backend: str = "none"
     object_detector_model: str = "yolov8x.pt"
-    qwen_model_id: str = "Qwen/Qwen3.6-27B"
+    qwen_model_id: str = "/home/minsung0830/accident-vlm/models/Qwen3.6-27B"
     device: str = "auto"
     regular_frame_interval_sec: float = Field(default=1.0, gt=0)
+    max_selected_frames: int = Field(default=16, gt=0)
 
 
 class PathAnalysisRequest(BaseModel):

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from functools import lru_cache
 from pathlib import Path
 from typing import Protocol
 
@@ -110,6 +111,7 @@ class EasyOcrBackend:
         return [observation for observation in observations if observation["text"]]
 
 
+@lru_cache(maxsize=8)
 def create_ocr_backend(name: str = "auto") -> OcrBackend:
     if name in {"auto", "easyocr"}:
         try:

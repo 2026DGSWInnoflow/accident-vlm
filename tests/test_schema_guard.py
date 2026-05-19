@@ -80,3 +80,13 @@ def test_validate_final_output_does_not_mutate_input_payload():
     ]
     assert payload["objective_summary"] == "상대 차량의 과실이 관찰됨"
     assert payload["uncertainties"] == ["existing"]
+
+
+def test_validate_final_output_normalizes_vlm_status_synonyms_without_mutating_input():
+    payload = _minimal_final_output_payload("차량과 보행자가 횡단보도 부근에서 관찰됨")
+    payload["scene_type"]["status"] = "confirmed"
+
+    output = validate_final_output(payload)
+
+    assert output.scene_type.status == Status.OBSERVED
+    assert payload["scene_type"]["status"] == "confirmed"

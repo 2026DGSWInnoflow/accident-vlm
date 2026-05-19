@@ -50,9 +50,10 @@ def create_app(job_root: Path = Path("outputs/api_jobs")) -> FastAPI:
         ocr_backend: str = Form("auto"),
         object_detector_backend: str = Form("none"),
         object_detector_model: str = Form("yolov8x.pt"),
-        qwen_model_id: str = Form("Qwen/Qwen3.6-27B"),
+        qwen_model_id: str = Form("/home/minsung0830/accident-vlm/models/Qwen3.6-27B"),
         device: str = Form("auto"),
         regular_frame_interval_sec: float = Form(1.0),
+        max_selected_frames: int = Form(16),
     ) -> JobCreatedResponse:
         options = AnalysisOptions(
             mode=mode,
@@ -62,6 +63,7 @@ def create_app(job_root: Path = Path("outputs/api_jobs")) -> FastAPI:
             qwen_model_id=qwen_model_id,
             device=device,
             regular_frame_interval_sec=regular_frame_interval_sec,
+            max_selected_frames=max_selected_frames,
         )
         record = job_store.create(options.mode, Path(file.filename or "upload.mp4"))
         input_path = job_store.input_path(record.job_id, file.filename or "upload.mp4")

@@ -25,6 +25,7 @@ def build_pre_vlm_context(
         duration_sec=metadata.duration_sec,
         fps=metadata.fps,
         interval_sec=active_config.regular_frame_interval_sec,
+        max_frames=active_config.max_selected_frames,
     )
     selected_frames = [
         frame for frame in selected_frames if frame.frame_index < metadata.frame_count
