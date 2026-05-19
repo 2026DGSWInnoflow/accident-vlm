@@ -34,22 +34,55 @@ def parse_ffprobe_streams(data: dict[str, Any]) -> VideoMetadata:
 
 
 def probe_video(video_path: Path) -> VideoMetadata:
-    result = subprocess.run(
-        [
-            "ffprobe",
-            "-v",
-            "error",
-            "-show_streams",
-            "-show_format",
-            "-of",
-            "json",
-            str(video_path),
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
+    try:
+        result = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_streams",
+                "-show_format",
+                "-of",
+                "json",
+                str(video_path),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        return parse_ffprobe_streams(json.loads(result.stdout))
+    except FileNotFoundError:
+        return probe_video_with_opencv(video_path)
+
+
+def probe_video_with_opencv(video_path: Path) -> VideoMetadata:
+    import cv2
+
+    capture = cv2.VideoCapture(str(video_path))
+    if not capture.isOpened():
+        raise IngestionError(f"Cannot open video: {video_path}")
+    try:
+        fps = float(capture.get(cv2.CAP_PROP_FPS))
+        frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
+        width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    finally:
+        capture.release()
+
+    if not math.isfinite(fps) or fps <= 0:
+        raise IngestionError("OpenCV could not determine a positive FPS")
+    if frame_count < 0:
+        raise IngestionError("OpenCV returned an invalid frame count")
+    if width <= 0 or height <= 0:
+        raise IngestionError("OpenCV could not determine video dimensions")
+
+    return VideoMetadata(
+        duration_sec=frame_count / fps if frame_count else 0.0,
+        fps=fps,
+        resolution=f"{width}x{height}",
+        frame_count=frame_count,
+        has_audio=False,
     )
-    return parse_ffprobe_streams(json.loads(result.stdout))
 
 
 def _first_video_stream(streams: Any) -> dict[str, Any]:
