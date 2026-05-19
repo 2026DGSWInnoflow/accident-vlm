@@ -13,6 +13,7 @@ def build_evidence_package(context: PipelineContext) -> dict:
             "metadata": metadata,
             "input_quality": context.input_quality.model_dump() if context.input_quality else {},
             "ocr": deepcopy(context.ocr_observations),
+            "ocr_summary": deepcopy(context.ocr_summary),
             "scene_type_candidates": deepcopy(context.scene_type_candidates),
             "tracks": deepcopy(context.tracks),
             "road_geometry": deepcopy(context.road_geometry),

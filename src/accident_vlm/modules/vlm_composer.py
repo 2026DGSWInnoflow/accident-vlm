@@ -70,12 +70,17 @@ class VLMBackend(Protocol):
 
 def compose_with_backend(context: PipelineContext, backend: VLMBackend) -> dict[str, Any]:
     prompt = build_vlm_prompt(context)
-    image_paths = [
-        frame["path"]
-        for frame in context.evidence_package.get("frames", [])
-        if isinstance(frame, dict) and frame.get("path")
-    ]
+    image_paths = _collect_evidence_image_paths(context.evidence_package)
     return backend.generate_json(prompt=prompt, image_paths=image_paths)
+
+
+def _collect_evidence_image_paths(evidence_package: dict[str, Any]) -> list[str]:
+    image_paths: list[str] = []
+    for section in ("frames", "overlays", "crops"):
+        for item in evidence_package.get(section, []):
+            if isinstance(item, dict) and item.get("path"):
+                image_paths.append(item["path"])
+    return image_paths
 
 
 def render_qwen_chat_template(processor: Any, messages: list[dict[str, Any]]) -> str:

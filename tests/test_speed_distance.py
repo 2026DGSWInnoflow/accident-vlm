@@ -1,4 +1,4 @@
-from accident_vlm.modules.speed_distance import choose_speed_estimate
+from accident_vlm.modules.speed_distance import choose_speed_estimate, estimate_speed_and_distance
 
 
 def test_choose_ocr_speed_before_geometry_speed() -> None:
@@ -186,3 +186,32 @@ def test_extra_fields_are_preserved_on_selected_estimate() -> None:
         "source_frame_id": "frame_000123",
         "evidence": {"bbox": [10, 20, 30, 40]},
     }
+
+
+def test_estimate_speed_uses_ocr_summary_before_raw_observations() -> None:
+    result = estimate_speed_and_distance(
+        ocr_observations=[
+            {
+                "frame_id": "frame_000001",
+                "confidence": 0.91,
+                "parsed": {"speed_kmh": 51.0},
+            }
+        ],
+        tracks=[],
+        road_geometry={},
+        ocr_summary={
+            "speed": {
+                "value": "48km/h",
+                "numeric_kmh": 48.0,
+                "range_kmh": [47.0, 49.0],
+                "confidence": "high",
+                "evidence": ["frame_000010", "frame_000020", "frame_000030"],
+            }
+        },
+    )
+
+    selected = result["speed_estimates"][0]
+    assert selected["method"] == "ocr_overlay"
+    assert selected["source"] == "ocr_summary"
+    assert selected["numeric_kmh"] == 48.0
+    assert selected["range_kmh"] == [47.0, 49.0]

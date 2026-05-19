@@ -37,7 +37,7 @@ def test_build_vlm_prompt_includes_system_prompt_schema_and_evidence_package() -
     assert "확인불가" in prompt
 
 
-def test_compose_with_backend_sends_prompt_and_truthy_frame_paths() -> None:
+def test_compose_with_backend_sends_prompt_and_truthy_evidence_image_paths() -> None:
     context = PipelineContext(
         video_path="sample.mp4",
         evidence_package={
@@ -46,6 +46,13 @@ def test_compose_with_backend_sends_prompt_and_truthy_frame_paths() -> None:
                 {"id": "f002", "path": None},
                 {"id": "f003", "path": ""},
                 {"id": "f004", "path": "/tmp/frame-4.jpg"},
+            ],
+            "overlays": [
+                {"id": "o001", "path": "/tmp/overlay-1.jpg"},
+            ],
+            "crops": [
+                {"id": "c001", "path": "/tmp/crop-1.jpg"},
+                {"id": "c002", "path": ""},
             ],
             "precomputed_facts": {},
         },
@@ -56,7 +63,12 @@ def test_compose_with_backend_sends_prompt_and_truthy_frame_paths() -> None:
 
     assert result == {"schema_version": "accident_video_facts.v1"}
     assert backend.prompt == build_vlm_prompt(context)
-    assert backend.image_paths == ["/tmp/frame-1.jpg", "/tmp/frame-4.jpg"]
+    assert backend.image_paths == [
+        "/tmp/frame-1.jpg",
+        "/tmp/frame-4.jpg",
+        "/tmp/overlay-1.jpg",
+        "/tmp/crop-1.jpg",
+    ]
 
 
 def test_parse_json_response_accepts_python_style_object() -> None:

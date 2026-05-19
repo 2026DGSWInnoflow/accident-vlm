@@ -48,6 +48,7 @@ class PipelineContext(BaseModel):
     input_quality: InputQuality | None = None
     selected_frames: list[SelectedFrame] = Field(default_factory=list)
     ocr_observations: list[dict] = Field(default_factory=list)
+    ocr_summary: dict = Field(default_factory=dict)
     scene_type_candidates: list[dict] = Field(default_factory=list)
     tracks: list[dict] = Field(default_factory=list)
     road_geometry: dict = Field(default_factory=dict)

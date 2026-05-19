@@ -84,8 +84,25 @@ def estimate_speed_and_distance(
     ocr_observations: list[dict],
     tracks: list[dict],
     road_geometry: dict,
+    ocr_summary: dict | None = None,
 ) -> dict:
     raw_estimates: list[dict] = []
+    if ocr_summary:
+        summary_speed = ocr_summary.get("speed", {})
+        if summary_speed.get("numeric_kmh") is not None:
+            raw_estimates.append(
+                {
+                    "actor_id": "ego_vehicle",
+                    "value": summary_speed.get("value"),
+                    "numeric_kmh": summary_speed.get("numeric_kmh"),
+                    "range_kmh": summary_speed.get("range_kmh"),
+                    "method": "ocr_overlay",
+                    "confidence": summary_speed.get("confidence", "medium"),
+                    "evidence": summary_speed.get("evidence", []),
+                    "source": "ocr_summary",
+                }
+            )
+
     for observation in ocr_observations:
         parsed = observation.get("parsed", {})
         speed_kmh = parsed.get("speed_kmh")

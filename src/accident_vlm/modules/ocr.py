@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import re
+from collections import Counter
 from functools import lru_cache
 from pathlib import Path
+from statistics import median
 from typing import Protocol
 
 import cv2
@@ -160,3 +162,100 @@ def extract_ocr_observations(
             observation["parsed"] = parse_overlay_text(observation.get("text", ""))
             observations.append(observation)
     return observations
+
+
+def summarize_ocr_observations(observations: list[dict]) -> dict:
+    datetime_values: list[tuple[str, str, float]] = []
+    speed_values: list[tuple[float, str, float]] = []
+    gps_values: list[tuple[dict, str, float]] = []
+
+    for observation in observations:
+        parsed = observation.get("parsed", {})
+        confidence = float(observation.get("confidence") or 0.0)
+        frame_id = observation.get("frame_id", "unknown")
+        if "datetime" in parsed:
+            datetime_values.append((parsed["datetime"], frame_id, confidence))
+        if "speed_kmh" in parsed:
+            speed_values.append((float(parsed["speed_kmh"]), frame_id, confidence))
+        if "gps" in parsed:
+            gps_values.append((parsed["gps"], frame_id, confidence))
+
+    return {
+        "datetime": _vote_text_value(datetime_values, "ocr_overlay"),
+        "speed": _summarize_speed_values(speed_values),
+        "gps": _summarize_gps_values(gps_values),
+        "observation_count": len(observations),
+    }
+
+
+def _vote_text_value(values: list[tuple[str, str, float]], source: str) -> dict:
+    if not values:
+        return {
+            "value": None,
+            "status": "unknown",
+            "confidence": "unknown",
+            "source": source,
+            "evidence": [],
+        }
+    counter = Counter(value for value, _, _ in values)
+    value, count = counter.most_common(1)[0]
+    evidence = [frame_id for candidate, frame_id, _ in values if candidate == value]
+    confidence_score = count / len(values)
+    confidence = "high" if confidence_score >= 0.75 else "medium" if confidence_score >= 0.5 else "low"
+    return {
+        "value": value,
+        "status": "observed",
+        "confidence": confidence,
+        "source": source,
+        "evidence": evidence,
+        "vote_count": count,
+        "total_candidates": len(values),
+    }
+
+
+def _summarize_speed_values(values: list[tuple[float, str, float]]) -> dict:
+    if not values:
+        return {
+            "value": "모름",
+            "numeric_kmh": None,
+            "range_kmh": None,
+            "status": "unknown",
+            "confidence": "unknown",
+            "source": "ocr_overlay",
+            "evidence": [],
+        }
+    speeds = [value for value, _, _ in values]
+    selected = float(median(speeds))
+    spread = max(speeds) - min(speeds)
+    confidence = "high" if len(values) >= 3 and spread <= 3 else "medium" if spread <= 8 else "low"
+    return {
+        "value": f"{selected:g}km/h",
+        "numeric_kmh": selected,
+        "range_kmh": [min(speeds), max(speeds)],
+        "status": "observed",
+        "confidence": confidence,
+        "source": "ocr_overlay",
+        "evidence": [frame_id for _, frame_id, _ in values],
+        "sample_count": len(values),
+    }
+
+
+def _summarize_gps_values(values: list[tuple[dict, str, float]]) -> dict:
+    if not values:
+        return {
+            "value": None,
+            "status": "unknown",
+            "confidence": "unknown",
+            "source": "ocr_overlay",
+            "evidence": [],
+        }
+    latitudes = [float(value["lat"]) for value, _, _ in values]
+    longitudes = [float(value["lon"]) for value, _, _ in values]
+    return {
+        "value": {"lat": float(median(latitudes)), "lon": float(median(longitudes))},
+        "status": "observed",
+        "confidence": "medium" if len(values) >= 2 else "low",
+        "source": "ocr_overlay",
+        "evidence": [frame_id for _, frame_id, _ in values],
+        "sample_count": len(values),
+    }

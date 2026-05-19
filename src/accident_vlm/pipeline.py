@@ -3,10 +3,15 @@ from pathlib import Path
 from accident_vlm.config import PipelineConfig
 from accident_vlm.modules.actor_tracking import create_object_detector, detect_and_track_actors
 from accident_vlm.modules.evidence_builder import build_evidence_package
+from accident_vlm.modules.evidence_visuals import build_visual_evidence
 from accident_vlm.modules.event_detection import detect_event_candidates
 from accident_vlm.modules.frame_selection import extract_selected_frames, select_regular_frames
 from accident_vlm.modules.ingestion import probe_video
-from accident_vlm.modules.ocr import create_ocr_backend, extract_ocr_observations
+from accident_vlm.modules.ocr import (
+    create_ocr_backend,
+    extract_ocr_observations,
+    summarize_ocr_observations,
+)
 from accident_vlm.modules.road_geometry import analyze_road_geometry
 from accident_vlm.modules.scene import classify_scene_candidates
 from accident_vlm.modules.speed_distance import estimate_speed_and_distance
@@ -60,6 +65,7 @@ def analyze_video_pre_vlm(
     if active_config.enable_ocr:
         ocr_backend = create_ocr_backend(active_config.ocr_backend)
         context.ocr_observations = extract_ocr_observations(context.selected_frames, ocr_backend)
+        context.ocr_summary = summarize_ocr_observations(context.ocr_observations)
 
     if active_config.enable_actor_tracking:
         detector = create_object_detector(
@@ -67,6 +73,11 @@ def analyze_video_pre_vlm(
             active_config.object_detector_model,
         )
         context.tracks = detect_and_track_actors(context.selected_frames, detector)
+        context.overlays, context.crops = build_visual_evidence(
+            context.selected_frames,
+            context.tracks,
+            run_output_dir,
+        )
 
     if active_config.enable_road_geometry:
         context.road_geometry = analyze_road_geometry(
@@ -79,6 +90,7 @@ def analyze_video_pre_vlm(
             context.ocr_observations,
             context.tracks,
             context.road_geometry,
+            context.ocr_summary,
         )
 
     if active_config.enable_traffic_control:
