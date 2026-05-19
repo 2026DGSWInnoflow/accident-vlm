@@ -74,6 +74,24 @@ def compose_with_backend(context: PipelineContext, backend: VLMBackend) -> dict[
     return backend.generate_json(prompt=prompt, image_paths=image_paths)
 
 
+def compose_with_retry(
+    context: PipelineContext,
+    backend: VLMBackend,
+    max_attempts: int = 2,
+) -> dict[str, Any]:
+    if max_attempts <= 0:
+        raise ValueError("max_attempts must be positive")
+    last_error: Exception | None = None
+    for attempt in range(max_attempts):
+        try:
+            return compose_with_backend(context, backend)
+        except Exception as exc:  # noqa: BLE001
+            last_error = exc
+            if attempt == max_attempts - 1:
+                break
+    raise ValueError(f"VLM JSON composition failed after {max_attempts} attempts: {last_error}")
+
+
 def _collect_evidence_image_paths(evidence_package: dict[str, Any]) -> list[str]:
     image_paths: list[str] = []
     for section in ("frames", "overlays", "crops"):
@@ -186,7 +204,7 @@ def compose_final_facts(
     context: PipelineContext,
     backend: VLMBackend,
 ) -> AccidentFactOutput:
-    payload = compose_with_backend(context, backend)
+    payload = compose_with_retry(context, backend)
     return validate_final_output(payload)
 
 

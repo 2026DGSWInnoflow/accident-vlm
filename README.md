@@ -27,7 +27,7 @@ Generate the full pre-VLM evidence package:
 ```bash
 accident-vlm analyze input.mp4 outputs/pre_vlm_context.json \
   --ocr-backend auto \
-  --detector ultralytics \
+  --detector bytetrack \
   --detector-model yolov8x.pt
 ```
 
@@ -38,7 +38,7 @@ accident-vlm analyze-full input.mp4 \
   --pre-vlm-output outputs/pre_vlm_context.json \
   --final-output outputs/accident_facts.json \
   --ocr-backend auto \
-  --detector ultralytics \
+  --detector bytetrack \
   --detector-model yolov8x.pt \
   --qwen-model Qwen/Qwen3.6-27B \
   --device auto
@@ -77,7 +77,7 @@ curl -X POST http://localhost:8000/v1/jobs/from-path \
     "options": {
       "mode": "pre_vlm",
       "ocr_backend": "auto",
-      "object_detector_backend": "ultralytics",
+      "object_detector_backend": "bytetrack",
       "object_detector_model": "yolov8x.pt"
     }
   }'
@@ -90,7 +90,7 @@ curl -X POST http://localhost:8000/v1/jobs/upload \
   -F "file=@sample.mp4" \
   -F "mode=full" \
   -F "ocr_backend=auto" \
-  -F "object_detector_backend=ultralytics" \
+  -F "object_detector_backend=bytetrack" \
   -F "object_detector_model=yolov8x.pt" \
   -F "qwen_model_id=Qwen/Qwen3.6-27B" \
   -F "device=auto"

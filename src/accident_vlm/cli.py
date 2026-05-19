@@ -46,7 +46,7 @@ def analyze(
     ] = "auto",
     object_detector_backend: Annotated[
         str,
-        typer.Option("--detector", help="Object detector backend: none, ultralytics, yolo."),
+        typer.Option("--detector", help="Object detector/tracker: none, ultralytics, bytetrack, botsort."),
     ] = "none",
     object_detector_model: Annotated[
         str,

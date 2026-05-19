@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import re
+from pathlib import Path
+
 import cv2
 import numpy as np
 
@@ -23,8 +26,16 @@ def _classify_signal_color(image: np.ndarray) -> tuple[str, float]:
     return color, score
 
 
-def analyze_traffic_control(selected_frames: list[SelectedFrame], ocr_observations: list[dict]) -> dict:
-    signal_votes: list[tuple[str, float, str]] = []
+def analyze_traffic_control(
+    selected_frames: list[SelectedFrame],
+    ocr_observations: list[dict],
+    output_dir: Path | None = None,
+) -> dict:
+    signal_votes: list[tuple[str, float, str, dict | None]] = []
+    signal_crops: list[dict] = []
+    if output_dir:
+        output_dir.mkdir(parents=True, exist_ok=True)
+
     for frame in selected_frames[:20]:
         if not frame.path:
             continue
@@ -32,43 +43,66 @@ def analyze_traffic_control(selected_frames: list[SelectedFrame], ocr_observatio
         if image is None:
             continue
         height, width = image.shape[:2]
-        upper = image[: int(height * 0.45), :]
-        # Traffic lights are usually small bright colored blobs in the upper scene.
-        color, score = _classify_signal_color(upper)
-        if color != "확인불가":
-            signal_votes.append((color, score, frame.id))
+        for index, candidate in enumerate(_detect_signal_candidates(image)):
+            x1, y1, x2, y2 = candidate["bbox"]
+            crop = image[y1:y2, x1:x2]
+            color, score = _classify_signal_color(crop)
+            if color == "확인불가":
+                continue
+            crop_record = None
+            if output_dir:
+                crop_path = output_dir / f"{frame.id}_signal_{index:02d}.jpg"
+                cv2.imwrite(str(crop_path), crop)
+                crop_record = {
+                    "id": f"signal_{frame.id}_{index:02d}",
+                    "path": str(crop_path),
+                    "frame_id": frame.id,
+                    "bbox": candidate["bbox"],
+                    "color": color,
+                    "score": score,
+                    "purpose": "traffic_light_crop",
+                }
+                signal_crops.append(crop_record)
+            signal_votes.append((color, score, frame.id, crop_record))
 
     if signal_votes:
         color_scores: dict[str, float] = {}
         evidence: dict[str, list[str]] = {}
-        for color, score, frame_id in signal_votes:
+        crops_by_color: dict[str, list[dict]] = {}
+        for color, score, frame_id, crop_record in signal_votes:
             color_scores[color] = color_scores.get(color, 0.0) + score
             evidence.setdefault(color, []).append(frame_id)
+            if crop_record:
+                crops_by_color.setdefault(color, []).append(crop_record)
         selected_color = max(color_scores, key=color_scores.get)
         signal = {
             "value": selected_color,
             "visible": True,
-            "method": "hsv_temporal_vote",
-            "confidence": "low",
+            "method": "traffic_light_hsv_crop_temporal_vote",
+            "confidence": "medium" if len(evidence[selected_color]) >= 2 else "low",
             "evidence": evidence[selected_color],
-            "note": "HSV 색상 후보이므로 신호등 crop classifier로 후속 검증 필요",
+            "crops": crops_by_color.get(selected_color, []),
+            "note": "HSV crop 후보 기반이므로 작은 신호등/역광에서는 confidence를 낮게 유지",
         }
     else:
         signal = {
             "value": "확인불가",
             "visible": False,
-            "method": "hsv_temporal_vote",
+            "method": "traffic_light_hsv_crop_temporal_vote",
             "confidence": "unknown",
             "evidence": [],
+            "crops": signal_crops,
         }
 
     signs = []
     for observation in ocr_observations:
         text = observation.get("text", "")
-        if "30" in text or "50" in text or "60" in text:
+        speed_limit_match = re.search(r"(?:제한속도|속도제한|speed\s*limit)?\s*(30|40|50|60|70|80|90|100|110)", text, re.IGNORECASE)
+        if speed_limit_match:
             signs.append(
                 {
-                    "value": "제한속도",
+                    "value": f"제한속도 {speed_limit_match.group(1)}",
+                    "numeric_kmh": int(speed_limit_match.group(1)),
                     "raw_text": text,
                     "confidence": observation.get("confidence", 0.0),
                     "source": observation.get("source", "ocr"),
@@ -91,3 +125,34 @@ def analyze_traffic_control(selected_frames: list[SelectedFrame], ocr_observatio
         "signs": signs,
         "crosswalk": {"visible": False, "confidence": "unknown", "method": "not_implemented"},
     }
+
+
+def _detect_signal_candidates(image: np.ndarray) -> list[dict]:
+    height, width = image.shape[:2]
+    upper = image[: int(height * 0.45), :]
+    hsv = cv2.cvtColor(upper, cv2.COLOR_BGR2HSV)
+    red_mask = cv2.inRange(hsv, (0, 80, 80), (10, 255, 255)) | cv2.inRange(
+        hsv, (170, 80, 80), (180, 255, 255)
+    )
+    yellow_mask = cv2.inRange(hsv, (18, 80, 80), (38, 255, 255))
+    green_mask = cv2.inRange(hsv, (40, 60, 60), (90, 255, 255))
+    mask = red_mask | yellow_mask | green_mask
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    candidates: list[dict] = []
+    for contour in contours:
+        x, y, w, h = cv2.boundingRect(contour)
+        area = w * h
+        if area < 20 or area > width * height * 0.05:
+            continue
+        pad = max(6, int(max(w, h) * 0.75))
+        candidates.append(
+            {
+                "bbox": [
+                    max(0, x - pad),
+                    max(0, y - pad),
+                    min(width, x + w + pad),
+                    min(height, y + h + pad),
+                ]
+            }
+        )
+    return candidates

@@ -17,7 +17,11 @@ def _bbox_iou(first: list[int], second: list[int]) -> float:
     return intersection / union if union else 0.0
 
 
-def detect_event_candidates(tracks: list[dict], speed_and_distance: dict | None = None) -> list[dict]:
+def detect_event_candidates(
+    tracks: list[dict],
+    speed_and_distance: dict | None = None,
+    input_quality: dict | None = None,
+) -> list[dict]:
     events: list[dict] = []
     for track in tracks:
         movement = track.get("movement_candidate")
@@ -33,6 +37,9 @@ def detect_event_candidates(tracks: list[dict], speed_and_distance: dict | None 
                     "evidence": [first_position.get("frame_id")],
                 }
             )
+        approach_event = _detect_distance_drop(track)
+        if approach_event:
+            events.append(approach_event)
 
     positions_by_time: dict[str, list[tuple[str, list[int], str]]] = {}
     for track in tracks:
@@ -60,6 +67,9 @@ def detect_event_candidates(tracks: list[dict], speed_and_distance: dict | None 
                 )
 
     if speed_and_distance:
+        sudden_stop = _detect_sudden_stop(speed_and_distance)
+        if sudden_stop:
+            events.append(sudden_stop)
         for item in speed_and_distance.get("relative_motion", []):
             if item.get("relative_speed_trend") == "접근":
                 events.append(
@@ -71,4 +81,68 @@ def detect_event_candidates(tracks: list[dict], speed_and_distance: dict | None 
                         "signals": ["relative_motion"],
                     }
                 )
+    if input_quality:
+        shake_score = input_quality.get("camera_shake_score", {})
+        if isinstance(shake_score, dict) and float(shake_score.get("value") or 0.0) >= 20:
+            events.append(
+                {
+                    "time": shake_score.get("time", "확인불가"),
+                    "event_type": "충격후보",
+                    "actors": [],
+                    "confidence": "low",
+                    "signals": ["camera_shake"],
+                    "evidence": shake_score.get("evidence", []),
+                }
+            )
     return sorted(events, key=lambda event: event.get("time") or "")
+
+
+def _bbox_area(bbox: list[int]) -> float:
+    if len(bbox) != 4:
+        return 0.0
+    return max(0, bbox[2] - bbox[0]) * max(0, bbox[3] - bbox[1])
+
+
+def _detect_distance_drop(track: dict) -> dict | None:
+    positions = track.get("positions", [])
+    if len(positions) < 2:
+        return None
+    first_area = _bbox_area(positions[0].get("bbox", []))
+    last_area = _bbox_area(positions[-1].get("bbox", []))
+    if first_area <= 0 or last_area < first_area * 2.5:
+        return None
+    return {
+        "time": positions[-1].get("time"),
+        "event_type": "급접근",
+        "actors": [track.get("track_id")],
+        "confidence": "medium" if last_area >= first_area * 4 else "low",
+        "signals": ["bbox_area_increase"],
+        "evidence": [positions[0].get("frame_id"), positions[-1].get("frame_id")],
+        "area_ratio": round(last_area / first_area, 3),
+    }
+
+
+def _detect_sudden_stop(speed_and_distance: dict) -> dict | None:
+    estimates = [
+        estimate
+        for estimate in speed_and_distance.get("speed_estimates", [])
+        if isinstance(estimate, dict)
+        and estimate.get("actor_id") == "ego_vehicle"
+        and estimate.get("numeric_kmh") is not None
+    ]
+    if len(estimates) < 2:
+        return None
+    first = estimates[0]
+    last = estimates[-1]
+    delta = float(first["numeric_kmh"]) - float(last["numeric_kmh"])
+    if delta < 20:
+        return None
+    return {
+        "time": last.get("time", "확인불가"),
+        "event_type": "급감속",
+        "actors": ["ego_vehicle"],
+        "confidence": "medium" if delta >= 30 else "low",
+        "signals": ["speed_drop"],
+        "evidence": [*first.get("evidence", []), *last.get("evidence", [])],
+        "speed_delta_kmh": round(delta, 3),
+    }

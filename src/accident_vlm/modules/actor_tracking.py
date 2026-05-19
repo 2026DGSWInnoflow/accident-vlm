@@ -25,6 +25,7 @@ class Detection:
     label: str
     confidence: float
     bbox: list[int]
+    track_id: str | None = None
 
 
 class ObjectDetector(Protocol):
@@ -44,7 +45,10 @@ class NoObjectDetector:
 class UltralyticsDetector:
     name = "ultralytics"
 
-    def __init__(self, model_name: str) -> None:
+    def __init__(self, model_name: str, model=None) -> None:
+        if model is not None:
+            self._model = model
+            return
         try:
             from ultralytics import YOLO  # type: ignore
         except ImportError as exc:
@@ -67,10 +71,62 @@ class UltralyticsDetector:
         return detections
 
 
+class UltralyticsTracker(UltralyticsDetector):
+    name = "ultralytics_track"
+
+    def __init__(
+        self,
+        model_name: str,
+        tracker_config: str = "bytetrack.yaml",
+        model=None,
+    ) -> None:
+        super().__init__(model_name, model=model)
+        self.tracker_config = tracker_config
+
+    def detect(self, image_path: Path) -> list[Detection]:
+        results = self._model.track(
+            source=str(image_path),
+            tracker=self.tracker_config,
+            persist=True,
+            verbose=False,
+        )
+        detections: list[Detection] = []
+        for result in results:
+            names = result.names
+            for box in result.boxes:
+                cls_id = int(box.cls[0])
+                raw_label = names.get(cls_id, str(cls_id))
+                label = SUPPORTED_ACTOR_LABELS.get(raw_label, raw_label)
+                xyxy = [int(value) for value in box.xyxy[0]]
+                raw_track_id = getattr(box, "id", None)
+                track_id = None
+                if raw_track_id is not None:
+                    track_id = f"T{int(raw_track_id[0])}"
+                detections.append(
+                    Detection(
+                        label=label,
+                        confidence=float(box.conf[0]),
+                        bbox=xyxy,
+                        track_id=track_id,
+                    )
+                )
+        return detections
+
+
 @lru_cache(maxsize=8)
 def create_object_detector(backend: str, model_name: str) -> ObjectDetector:
     if backend in {"none", "disabled"}:
         return NoObjectDetector()
+    if backend in {"bytetrack", "ultralytics_track", "track"}:
+        try:
+            return UltralyticsTracker(model_name, tracker_config="bytetrack.yaml")
+        except RuntimeError:
+            return NoObjectDetector()
+    if backend in {"botsort", "bot-sort", "bo-sort"}:
+        try:
+            return UltralyticsTracker(model_name, tracker_config="botsort.yaml")
+        except RuntimeError:
+            return NoObjectDetector()
     if backend in {"auto", "ultralytics", "yolo"}:
         try:
             return UltralyticsDetector(model_name)
@@ -105,6 +161,14 @@ def _movement_from_points(first: tuple[float, float], last: tuple[float, float])
     return "직진"
 
 
+def _read_frame_shape(image_path: Path) -> tuple[int, int] | None:
+    image = cv2.imread(str(image_path))
+    if image is None:
+        return None
+    height, width = image.shape[:2]
+    return height, width
+
+
 def detect_and_track_actors(
     selected_frames: list[SelectedFrame],
     detector: ObjectDetector,
@@ -116,32 +180,40 @@ def detect_and_track_actors(
     for frame in selected_frames:
         if not frame.path:
             continue
-        image = cv2.imread(frame.path)
-        if image is None:
+        shape = _read_frame_shape(Path(frame.path))
+        if shape is None:
             continue
-        height, width = image.shape[:2]
+        height, width = shape
         detections = detector.detect(Path(frame.path))
         for detection in detections:
             center = _center(detection.bbox)
             candidate_index: int | None = None
             candidate_distance = max_match_distance_px
-            for index, track in enumerate(tracks):
-                if track["type"] != detection.label or not track["positions"]:
-                    continue
-                distance = _distance(center, track["positions"][-1]["center"])
-                if distance < candidate_distance:
-                    candidate_index = index
-                    candidate_distance = distance
+            if detection.track_id:
+                for index, track in enumerate(tracks):
+                    if track["track_id"] == detection.track_id:
+                        candidate_index = index
+                        break
+            if candidate_index is None:
+                for index, track in enumerate(tracks):
+                    if track["type"] != detection.label or not track["positions"]:
+                        continue
+                    distance = _distance(center, track["positions"][-1]["center"])
+                    if distance < candidate_distance:
+                        candidate_index = index
+                        candidate_distance = distance
             if candidate_index is None:
                 track = {
-                    "track_id": f"T{next_track_index}",
+                    "track_id": detection.track_id or f"T{next_track_index}",
                     "type": detection.label,
                     "role_candidate": "상대 차량" if detection.label != "보행자" else "보행자",
                     "positions": [],
                     "confidence": "medium",
                     "source": detector.name,
+                    "tracking_method": "detector_track_id" if detection.track_id else "center_distance",
                 }
-                next_track_index += 1
+                if detection.track_id is None:
+                    next_track_index += 1
                 tracks.append(track)
                 candidate_index = len(tracks) - 1
             tracks[candidate_index]["positions"].append(

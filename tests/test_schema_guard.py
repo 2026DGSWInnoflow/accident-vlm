@@ -1,5 +1,6 @@
 from accident_vlm.modules.schema_guard import (
     find_forbidden_terms,
+    repair_and_constrain_payload,
     sanitize_summary,
     validate_final_output,
 )
@@ -90,3 +91,26 @@ def test_validate_final_output_normalizes_vlm_status_synonyms_without_mutating_i
 
     assert output.scene_type.status == Status.OBSERVED
     assert payload["scene_type"]["status"] == "confirmed"
+
+
+def test_repair_and_constrain_payload_fills_required_fields_and_unknowns_unsupported_values():
+    payload = {
+        "scene_type": {
+            "value": "교차로",
+            "status": "observed",
+            "confidence": "high",
+            "source": [],
+            "evidence": [],
+        },
+        "rag_hints": {},
+        "objective_summary": "신호 상태는 녹색으로 보임",
+        "traffic_control": {"signal": {"value": "녹색", "evidence": []}},
+    }
+
+    repaired = repair_and_constrain_payload(payload)
+
+    assert repaired["schema_version"] == "accident_video_facts.v1"
+    assert repaired["scene_type"]["value"] == "확인불가"
+    assert repaired["scene_type"]["status"] == "unknown"
+    assert repaired["traffic_control"]["signal"]["value"] == "확인불가"
+    assert "근거 없는 값이 확인불가로 조정됨: scene_type" in repaired["uncertainties"]

@@ -8,6 +8,7 @@ from statistics import median
 from typing import Protocol
 
 import cv2
+import numpy as np
 
 from accident_vlm.schemas.preprocessing import SelectedFrame
 
@@ -131,36 +132,122 @@ def create_ocr_backend(name: str = "auto") -> OcrBackend:
     return UnavailableOcrBackend(f"unknown OCR backend: {name}")
 
 
+OVERLAY_ROIS = {
+    "full_frame": (0.0, 0.0, 1.0, 1.0),
+    "top_band": (0.0, 0.0, 1.0, 0.22),
+    "bottom_band": (0.0, 0.72, 1.0, 1.0),
+    "top_left": (0.0, 0.0, 0.45, 0.25),
+    "top_right": (0.55, 0.0, 1.0, 0.25),
+    "bottom_left": (0.0, 0.65, 0.55, 1.0),
+    "bottom_right": (0.45, 0.65, 1.0, 1.0),
+}
+
+
 def parse_overlay_text(text: str) -> dict:
-    datetime_match = re.search(r"\d{4}[-./]\d{2}[-./]\d{2}\s+\d{2}:\d{2}:\d{2}", text)
-    speed_match = re.search(r"(\d{1,3}(?:\.\d+)?)\s*(?:km/h|kph|KM/H)", text, re.IGNORECASE)
-    gps_match = re.search(r"(-?\d{1,3}\.\d+)[,\s]+(-?\d{1,3}\.\d+)", text)
+    normalized = _normalize_ocr_text(text)
+    datetime_match = re.search(
+        r"(?P<year>\d{4})[-./년\s]+(?P<month>\d{1,2})[-./월\s]+(?P<day>\d{1,2})"
+        r"(?:일)?\s+(?P<hour>\d{1,2}):(?P<minute>\d{2}):(?P<second>\d{2})",
+        normalized,
+    )
+    speed_match = re.search(
+        r"(?:speed|spd|속도)?\s*[:=]?\s*(?P<speed>\d{1,3}(?:\.\d+)?)\s*(?:km/h|kph|kmh|㎞/h)",
+        normalized,
+        re.IGNORECASE,
+    )
+    gps_match = re.search(
+        r"(?:gps|위치)?\s*[:=]?\s*(?:lat)?\s*(?P<lat_dir>[NS])?\s*"
+        r"(?P<lat>-?\d{1,3}\.\d+)[,\s]+(?:lon|lng)?\s*(?P<lon_dir>[EW])?\s*"
+        r"(?P<lon>-?\d{1,3}\.\d+)",
+        normalized,
+        re.IGNORECASE,
+    )
     parsed: dict = {}
     if datetime_match:
-        parsed["datetime"] = datetime_match.group(0).replace(".", "-").replace("/", "-")
+        parsed["datetime"] = (
+            f"{int(datetime_match.group('year')):04d}-"
+            f"{int(datetime_match.group('month')):02d}-"
+            f"{int(datetime_match.group('day')):02d} "
+            f"{int(datetime_match.group('hour')):02d}:"
+            f"{int(datetime_match.group('minute')):02d}:"
+            f"{int(datetime_match.group('second')):02d}"
+        )
     if speed_match:
-        parsed["speed_kmh"] = float(speed_match.group(1))
+        parsed["speed_kmh"] = float(speed_match.group("speed"))
     if gps_match:
-        parsed["gps"] = {"lat": float(gps_match.group(1)), "lon": float(gps_match.group(2))}
+        lat = float(gps_match.group("lat"))
+        lon = float(gps_match.group("lon"))
+        if (gps_match.group("lat_dir") or "").upper() == "S":
+            lat = -abs(lat)
+        if (gps_match.group("lon_dir") or "").upper() == "W":
+            lon = -abs(lon)
+        if abs(lat) <= 90 and abs(lon) <= 180:
+            parsed["gps"] = {"lat": lat, "lon": lon}
     return parsed
+
+
+def _normalize_ocr_text(text: str) -> str:
+    return (
+        text.replace("㎞", "km")
+        .replace("Ｋ", "K")
+        .replace("ｍ", "m")
+        .replace("／", "/")
+        .replace("|", " ")
+        .strip()
+    )
+
+
+def build_overlay_rois(image: np.ndarray) -> list[dict]:
+    height, width = image.shape[:2]
+    rois: list[dict] = []
+    for name, (x1_ratio, y1_ratio, x2_ratio, y2_ratio) in OVERLAY_ROIS.items():
+        x1 = int(round(width * x1_ratio))
+        y1 = int(round(height * y1_ratio))
+        x2 = int(round(width * x2_ratio))
+        y2 = int(round(height * y2_ratio))
+        crop = image[y1:y2, x1:x2]
+        if crop.size:
+            rois.append({"name": name, "bbox": [x1, y1, x2, y2], "image": crop})
+    return rois
+
+
+def _offset_bbox(bbox: list[int] | None, origin_x: int, origin_y: int) -> list[int] | None:
+    if bbox is None or len(bbox) != 4:
+        return bbox
+    return [bbox[0] + origin_x, bbox[1] + origin_y, bbox[2] + origin_x, bbox[3] + origin_y]
 
 
 def extract_ocr_observations(
     selected_frames: list[SelectedFrame],
     backend: OcrBackend,
+    roi_output_dir: Path | None = None,
 ) -> list[dict]:
     observations: list[dict] = []
+    if roi_output_dir:
+        roi_output_dir.mkdir(parents=True, exist_ok=True)
     for frame in selected_frames:
         if not frame.path:
             continue
-        for item in backend.read_text(Path(frame.path)):
-            observation = {
-                "time": frame.time,
-                "frame_id": frame.id,
-                **item,
-            }
-            observation["parsed"] = parse_overlay_text(observation.get("text", ""))
-            observations.append(observation)
+        image = cv2.imread(frame.path)
+        if image is None:
+            continue
+        for roi in build_overlay_rois(image):
+            roi_path = Path(frame.path)
+            if roi_output_dir:
+                roi_path = roi_output_dir / f"{frame.id}_{roi['name']}.jpg"
+                cv2.imwrite(str(roi_path), roi["image"])
+            origin_x, origin_y = roi["bbox"][0], roi["bbox"][1]
+            for item in backend.read_text(roi_path):
+                observation = {
+                    "time": frame.time,
+                    "frame_id": frame.id,
+                    "roi_name": roi["name"],
+                    "roi_bbox": roi["bbox"],
+                    **item,
+                    "bbox": _offset_bbox(item.get("bbox"), origin_x, origin_y),
+                }
+                observation["parsed"] = parse_overlay_text(observation.get("text", ""))
+                observations.append(observation)
     return observations
 
 

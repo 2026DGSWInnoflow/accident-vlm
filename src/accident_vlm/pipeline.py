@@ -79,7 +79,11 @@ def analyze_video_pre_vlm(
 
     if active_config.enable_ocr:
         ocr_backend = create_ocr_backend(active_config.ocr_backend)
-        context.ocr_observations = extract_ocr_observations(context.selected_frames, ocr_backend)
+        context.ocr_observations = extract_ocr_observations(
+            context.selected_frames,
+            ocr_backend,
+            roi_output_dir=run_output_dir / "ocr_rois",
+        )
         context.ocr_summary = summarize_ocr_observations(context.ocr_observations)
 
     if active_config.enable_actor_tracking:
@@ -98,6 +102,7 @@ def analyze_video_pre_vlm(
         context.road_geometry = analyze_road_geometry(
             context.selected_frames,
             lane_width_m=active_config.lane_width_m,
+            output_dir=run_output_dir / "road_geometry",
         )
 
     if active_config.enable_speed_distance:
@@ -112,6 +117,7 @@ def analyze_video_pre_vlm(
         context.traffic_control = analyze_traffic_control(
             context.selected_frames,
             context.ocr_observations,
+            output_dir=run_output_dir / "traffic_control",
         )
 
     if active_config.enable_scene_analysis:
@@ -125,6 +131,7 @@ def analyze_video_pre_vlm(
         context.event_candidates = detect_event_candidates(
             context.tracks,
             context.speed_and_distance,
+            context.input_quality.model_dump() if context.input_quality else None,
         )
         context.selected_segments = build_event_segments(
             context.event_candidates,

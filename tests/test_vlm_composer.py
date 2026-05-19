@@ -2,6 +2,7 @@ from accident_vlm.modules.vlm_composer import (
     SYSTEM_PROMPT,
     build_vlm_prompt,
     compose_with_backend,
+    compose_with_retry,
     get_qwen_backend,
     parse_json_response,
     render_qwen_chat_template,
@@ -18,6 +19,17 @@ class RecordingBackend:
         self.prompt = prompt
         self.image_paths = image_paths
         return {"schema_version": "accident_video_facts.v1"}
+
+
+class FlakyBackend:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def generate_json(self, prompt: str, image_paths: list[str]) -> dict:
+        self.calls += 1
+        if self.calls == 1:
+            raise ValueError("bad json")
+        return {"schema_version": "accident_video_facts.v1", "objective_summary": "ok"}
 
 
 def test_build_vlm_prompt_includes_system_prompt_schema_and_evidence_package() -> None:
@@ -126,3 +138,16 @@ def test_render_qwen_chat_template_disables_thinking() -> None:
     assert processor.kwargs["enable_thinking"] is False
     assert processor.kwargs["add_generation_prompt"] is True
     assert processor.kwargs["tokenize"] is False
+
+
+def test_compose_with_retry_retries_after_json_failure() -> None:
+    backend = FlakyBackend()
+
+    result = compose_with_retry(
+        PipelineContext(video_path="sample.mp4", evidence_package={"frames": []}),
+        backend,
+        max_attempts=2,
+    )
+
+    assert backend.calls == 2
+    assert result["objective_summary"] == "ok"
