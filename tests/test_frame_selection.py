@@ -1,6 +1,14 @@
+import cv2
+import numpy as np
 import pytest
 
-from accident_vlm.modules.frame_selection import select_regular_frames
+from accident_vlm.modules.frame_selection import (
+    build_event_segments,
+    merge_selected_frames,
+    select_motion_keyframes,
+    select_regular_frames,
+)
+from accident_vlm.schemas.preprocessing import VideoMetadata
 from accident_vlm.schemas.preprocessing import SelectedFrame
 
 
@@ -71,3 +79,124 @@ def test_select_regular_frames_rejects_invalid_arguments(
             fps=fps,
             interval_sec=interval_sec,
         )
+
+
+def test_select_motion_keyframes_finds_high_change_frames(tmp_path) -> None:
+    video_path = tmp_path / "motion.mp4"
+    writer = cv2.VideoWriter(
+        str(video_path),
+        cv2.VideoWriter_fourcc(*"mp4v"),
+        10,
+        (64, 48),
+    )
+    for index in range(10):
+        image = np.zeros((48, 64, 3), dtype=np.uint8)
+        if index >= 5:
+            image[:, :] = 255
+        writer.write(image)
+    writer.release()
+
+    frames = select_motion_keyframes(
+        video_path,
+        metadata=VideoMetadata(
+            duration_sec=1.0,
+            fps=10,
+            resolution="64x48",
+            frame_count=10,
+            has_audio=False,
+        ),
+        sample_interval_sec=0.1,
+        max_frames=2,
+        min_change_score=20.0,
+    )
+
+    assert [frame.purpose for frame in frames] == ["motion_keyframe"]
+    assert frames[0].frame_index in {5, 6}
+    assert frames[0].time in {"00:00.500", "00:00.600"}
+
+
+def test_merge_selected_frames_sorts_and_combines_duplicate_purposes() -> None:
+    merged = merge_selected_frames(
+        [
+            SelectedFrame(
+                id="frame_000030",
+                time="00:01.000",
+                frame_index=30,
+                purpose="regular_context",
+            )
+        ],
+        [
+            SelectedFrame(
+                id="frame_000030",
+                time="00:01.000",
+                frame_index=30,
+                purpose="motion_keyframe",
+            ),
+            SelectedFrame(
+                id="frame_000015",
+                time="00:00.500",
+                frame_index=15,
+                purpose="motion_keyframe",
+            ),
+        ],
+    )
+
+    assert [frame.frame_index for frame in merged] == [15, 30]
+    assert merged[1].purpose == "regular_context+motion_keyframe"
+
+
+def test_build_event_segments_uses_pre_and_post_windows() -> None:
+    segments = build_event_segments(
+        event_candidates=[
+            {
+                "time": "00:06.000",
+                "event_type": "접촉",
+                "actors": ["T1", "T2"],
+                "confidence": "medium",
+                "evidence": ["frame_000180"],
+            }
+        ],
+        metadata=VideoMetadata(
+            duration_sec=10.0,
+            fps=30,
+            resolution="640x480",
+            frame_count=300,
+            has_audio=False,
+        ),
+        pre_event_window_sec=5.0,
+        post_event_window_sec=3.0,
+    )
+
+    assert segments == [
+        {
+            "id": "seg_event_001",
+            "start": "00:01.000",
+            "end": "00:09.000",
+            "center_time": "00:06.000",
+            "reason": ["접촉"],
+            "actors": ["T1", "T2"],
+            "confidence": "medium",
+            "evidence": ["frame_000180"],
+        }
+    ]
+
+
+def test_build_event_segments_clamps_to_video_bounds_and_skips_unknown_time() -> None:
+    segments = build_event_segments(
+        event_candidates=[
+            {"time": "확인불가", "event_type": "접근"},
+            {"time": "00:01.000", "event_type": "급감속", "confidence": "low"},
+        ],
+        metadata=VideoMetadata(
+            duration_sec=2.0,
+            fps=30,
+            resolution="640x480",
+            frame_count=60,
+            has_audio=False,
+        ),
+        pre_event_window_sec=5.0,
+        post_event_window_sec=3.0,
+    )
+
+    assert segments[0]["start"] == "00:00.000"
+    assert segments[0]["end"] == "00:02.000"

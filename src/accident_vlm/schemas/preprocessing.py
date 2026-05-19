@@ -47,6 +47,7 @@ class PipelineContext(BaseModel):
     video_metadata: VideoMetadata | None = None
     input_quality: InputQuality | None = None
     selected_frames: list[SelectedFrame] = Field(default_factory=list)
+    selected_segments: list[dict] = Field(default_factory=list)
     ocr_observations: list[dict] = Field(default_factory=list)
     ocr_summary: dict = Field(default_factory=dict)
     scene_type_candidates: list[dict] = Field(default_factory=list)

@@ -1,6 +1,6 @@
 import pytest
 
-from accident_vlm.utils.timecode import frame_to_timecode, seconds_to_timecode
+from accident_vlm.utils.timecode import frame_to_timecode, parse_timecode, seconds_to_timecode
 
 
 def test_seconds_to_timecode_formats_minutes_seconds_and_millis() -> None:
@@ -9,6 +9,10 @@ def test_seconds_to_timecode_formats_minutes_seconds_and_millis() -> None:
 
 def test_frame_to_timecode_converts_frame_index_using_fps() -> None:
     assert frame_to_timecode(frame_index=90, fps=30) == "00:03.000"
+
+
+def test_parse_timecode_converts_minutes_seconds_and_millis() -> None:
+    assert parse_timecode("01:05.432") == 65.432
 
 
 def test_seconds_to_timecode_rejects_negative_seconds() -> None:

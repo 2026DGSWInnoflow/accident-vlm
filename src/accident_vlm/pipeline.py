@@ -5,7 +5,13 @@ from accident_vlm.modules.actor_tracking import create_object_detector, detect_a
 from accident_vlm.modules.evidence_builder import build_evidence_package
 from accident_vlm.modules.evidence_visuals import build_visual_evidence
 from accident_vlm.modules.event_detection import detect_event_candidates
-from accident_vlm.modules.frame_selection import extract_selected_frames, select_regular_frames
+from accident_vlm.modules.frame_selection import (
+    build_event_segments,
+    extract_selected_frames,
+    merge_selected_frames,
+    select_motion_keyframes,
+    select_regular_frames,
+)
 from accident_vlm.modules.ingestion import probe_video
 from accident_vlm.modules.ocr import (
     create_ocr_backend,
@@ -51,6 +57,15 @@ def analyze_video_pre_vlm(
     active_config = config or PipelineConfig()
     metadata = probe_video(video_path)
     context = build_pre_vlm_context(str(video_path), metadata, active_config)
+    if active_config.enable_motion_keyframes:
+        motion_frames = select_motion_keyframes(
+            video_path=video_path,
+            metadata=metadata,
+            sample_interval_sec=active_config.motion_sample_interval_sec,
+            max_frames=active_config.max_motion_keyframes,
+            min_change_score=active_config.min_motion_change_score,
+        )
+        context.selected_frames = merge_selected_frames(context.selected_frames, motion_frames)
 
     run_output_dir = active_config.output_dir / Path(video_path).stem
     frame_output_dir = run_output_dir / active_config.frame_output_dirname
@@ -110,6 +125,12 @@ def analyze_video_pre_vlm(
         context.event_candidates = detect_event_candidates(
             context.tracks,
             context.speed_and_distance,
+        )
+        context.selected_segments = build_event_segments(
+            context.event_candidates,
+            metadata,
+            active_config.pre_event_window_sec,
+            active_config.post_event_window_sec,
         )
 
     context.evidence_package = build_evidence_package(context)

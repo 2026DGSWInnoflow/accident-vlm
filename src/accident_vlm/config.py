@@ -10,6 +10,7 @@ class PipelineConfig(BaseModel):
     pre_event_window_sec: float = Field(default=5.0, gt=0)
     post_event_window_sec: float = Field(default=3.0, gt=0)
     enable_ocr: bool = True
+    enable_motion_keyframes: bool = True
     enable_scene_analysis: bool = True
     enable_actor_tracking: bool = True
     enable_road_geometry: bool = True
@@ -26,3 +27,6 @@ class PipelineConfig(BaseModel):
     qwen_model_id: str = "/home/minsung0830/accident-vlm/models/Qwen3.6-27B"
     device: str = "auto"
     lane_width_m: float = Field(default=3.2, gt=0)
+    motion_sample_interval_sec: float = Field(default=0.5, gt=0)
+    max_motion_keyframes: int = Field(default=8, gt=0)
+    min_motion_change_score: float = Field(default=12.0, ge=0)

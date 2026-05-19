@@ -1,3 +1,6 @@
+import re
+
+
 def seconds_to_timecode(seconds: float) -> str:
     if seconds < 0:
         raise ValueError("seconds must be non-negative")
@@ -16,3 +19,14 @@ def frame_to_timecode(frame_index: int, fps: float) -> str:
         raise ValueError("fps must be positive")
 
     return seconds_to_timecode(frame_index / fps)
+
+
+def parse_timecode(timecode: str) -> float:
+    match = re.fullmatch(r"(?P<minutes>\d{2,}):(?P<seconds>[0-5]\d)\.(?P<millis>\d{3})", timecode)
+    if match is None:
+        raise ValueError("timecode must use MM:SS.mmm format")
+    return (
+        int(match.group("minutes")) * 60
+        + int(match.group("seconds"))
+        + int(match.group("millis")) / 1000
+    )

@@ -7,6 +7,7 @@ def build_evidence_package(context: PipelineContext) -> dict:
     metadata = context.video_metadata.model_dump() if context.video_metadata else {}
     return {
         "frames": [frame.model_dump() for frame in context.selected_frames],
+        "selected_segments": deepcopy(context.selected_segments),
         "overlays": deepcopy(context.overlays),
         "crops": deepcopy(context.crops),
         "precomputed_facts": {
