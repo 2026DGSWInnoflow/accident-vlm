@@ -7,6 +7,7 @@ from accident_vlm.modules.vlm_composer import (
     parse_json_response,
     render_qwen_chat_template,
     _collect_evidence_image_paths,
+    _parse_max_memory,
 )
 from accident_vlm.schemas.preprocessing import PipelineContext
 
@@ -177,3 +178,22 @@ def test_collect_evidence_image_paths_caps_and_prioritizes_images(monkeypatch) -
         "/tmp/sign.jpg",
         "/tmp/event.jpg",
     ]
+
+
+def test_collect_evidence_image_paths_does_not_cap_by_default(monkeypatch) -> None:
+    monkeypatch.delenv("ACCIDENT_VLM_MAX_IMAGES", raising=False)
+    evidence_package = {
+        "frames": [{"path": f"/tmp/frame-{index}.jpg"} for index in range(20)],
+    }
+
+    assert len(_collect_evidence_image_paths(evidence_package)) == 20
+
+
+def test_parse_max_memory_accepts_gpu_and_cpu_entries() -> None:
+    assert _parse_max_memory("0:22GiB,1:22GiB,2:22GiB,3:22GiB,cpu:64GiB") == {
+        0: "22GiB",
+        1: "22GiB",
+        2: "22GiB",
+        3: "22GiB",
+        "cpu": "64GiB",
+    }

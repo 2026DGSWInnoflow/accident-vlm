@@ -93,9 +93,7 @@ def compose_with_retry(
 
 
 def _collect_evidence_image_paths(evidence_package: dict[str, Any]) -> list[str]:
-    max_images = int(os.getenv("ACCIDENT_VLM_MAX_IMAGES", "12"))
-    if max_images <= 0:
-        return []
+    max_images = int(os.getenv("ACCIDENT_VLM_MAX_IMAGES", "0"))
 
     weighted_paths: list[tuple[int, str]] = []
     for section in ("evidence_images", "crops", "overlays", "frames"):
@@ -109,7 +107,7 @@ def _collect_evidence_image_paths(evidence_package: dict[str, Any]) -> list[str]
     for _, path in sorted(weighted_paths, key=lambda entry: entry[0]):
         if path not in image_paths:
             image_paths.append(path)
-        if len(image_paths) >= max_images:
+        if max_images > 0 and len(image_paths) >= max_images:
             break
     return image_paths
 
@@ -154,12 +152,18 @@ class TransformersQwenBackend:
 
         self._image_cls = Image
         self._processor = AutoProcessor.from_pretrained(model_id, trust_remote_code=True)
+        model_kwargs = {
+            "device_map": device,
+            "dtype": "auto",
+            "low_cpu_mem_usage": True,
+            "trust_remote_code": True,
+        }
+        max_memory = _parse_max_memory(os.getenv("ACCIDENT_VLM_MAX_MEMORY"))
+        if max_memory:
+            model_kwargs["max_memory"] = max_memory
         self._model = AutoModelForImageTextToText.from_pretrained(
             model_id,
-            device_map=device,
-            dtype="auto",
-            low_cpu_mem_usage=True,
-            trust_remote_code=True,
+            **model_kwargs,
         )
         self._model.eval()
 
@@ -177,7 +181,7 @@ class TransformersQwenBackend:
         text = render_qwen_chat_template(self._processor, messages)
         inputs = self._processor(text=[text], images=images or None, return_tensors="pt")
         inputs = inputs.to(self._model.device)
-        max_new_tokens = int(os.getenv("ACCIDENT_VLM_MAX_NEW_TOKENS", "2048"))
+        max_new_tokens = int(os.getenv("ACCIDENT_VLM_MAX_NEW_TOKENS", "4096"))
         try:
             import torch  # type: ignore
 
@@ -203,10 +207,25 @@ class TransformersQwenBackend:
 
     def _load_image(self, path: str):
         image = self._image_cls.open(path).convert("RGB")
-        max_side = int(os.getenv("ACCIDENT_VLM_IMAGE_MAX_SIDE", "768"))
+        max_side = int(os.getenv("ACCIDENT_VLM_IMAGE_MAX_SIDE", "0"))
         if max_side > 0:
             image.thumbnail((max_side, max_side))
         return image
+
+
+def _parse_max_memory(raw_value: str | None) -> dict[Any, str]:
+    if not raw_value:
+        return {}
+    max_memory: dict[Any, str] = {}
+    for item in raw_value.split(","):
+        if not item.strip() or ":" not in item:
+            continue
+        key, value = item.split(":", 1)
+        normalized_key: Any = key.strip()
+        if normalized_key.isdigit():
+            normalized_key = int(normalized_key)
+        max_memory[normalized_key] = value.strip()
+    return max_memory
 
 
 def parse_json_response(text: str) -> dict[str, Any]:

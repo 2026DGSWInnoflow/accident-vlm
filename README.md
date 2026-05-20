@@ -47,6 +47,24 @@ accident-vlm analyze-full input.mp4 \
 The final JSON is still evidence constrained: unsupported facts must remain
 `확인불가`, and legal judgment terms are sanitized before output.
 
+For multi-GPU Qwen serving, make sure every GPU is visible to the API process.
+For example, on a 4 x 24GB server:
+
+```bash
+export CUDA_VISIBLE_DEVICES=0,1,2,3
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+export ACCIDENT_VLM_MAX_MEMORY="0:22GiB,1:22GiB,2:22GiB,3:22GiB,cpu:64GiB"
+```
+
+By default the VLM receives all evidence images at original resolution. If the
+server is memory constrained, these optional guards can be set:
+
+```bash
+export ACCIDENT_VLM_MAX_IMAGES=24
+export ACCIDENT_VLM_IMAGE_MAX_SIDE=1024
+export ACCIDENT_VLM_MAX_NEW_TOKENS=2048
+```
+
 ## API Server
 
 Run the API server:
