@@ -226,6 +226,14 @@ def _sample_positions(positions: list[Any]) -> list[dict[str, Any]]:
     return sampled
 
 
+def _chunk_max_new_tokens() -> int:
+    return int(os.getenv("ACCIDENT_VLM_CHUNK_MAX_NEW_TOKENS", "192"))
+
+
+def _final_max_new_tokens() -> int:
+    return int(os.getenv("ACCIDENT_VLM_FINAL_MAX_NEW_TOKENS", "512"))
+
+
 def _clear_cuda_cache() -> None:
     try:
         import torch  # type: ignore
@@ -366,7 +374,7 @@ class TransformersQwenBackend:
         chunk_size = int(os.getenv("ACCIDENT_VLM_IMAGE_CHUNK_SIZE", "8"))
         if chunk_size > 0 and len(images) > chunk_size:
             return self._generate_chunked_json(prompt, images, chunk_size)
-        return parse_json_response(self._generate_text(prompt, images))
+        return parse_json_response(self._generate_text(prompt, images, max_new_tokens=_final_max_new_tokens()))
 
     def _generate_chunked_json(self, prompt: str, images: list[Any], chunk_size: int) -> dict[str, Any]:
         chunk_summaries: list[dict[str, Any]] = []
@@ -384,7 +392,11 @@ class TransformersQwenBackend:
                 {
                     "chunk_index": chunk_index,
                     "image_indexes": list(range(start + 1, start + len(chunk_images) + 1)),
-                    "observations": self._generate_text(chunk_prompt, chunk_images),
+                    "observations": self._generate_text(
+                        chunk_prompt,
+                        chunk_images,
+                        max_new_tokens=_chunk_max_new_tokens(),
+                    ),
                 }
             )
 
@@ -394,9 +406,9 @@ class TransformersQwenBackend:
             "Use all chunk observations below as evidence and return the final JSON only.\n"
             f"{json.dumps(chunk_summaries, ensure_ascii=False, indent=2)}"
         )
-        return parse_json_response(self._generate_text(final_prompt, []))
+        return parse_json_response(self._generate_text(final_prompt, [], max_new_tokens=_final_max_new_tokens()))
 
-    def _generate_text(self, prompt: str, images: list[Any]) -> str:
+    def _generate_text(self, prompt: str, images: list[Any], max_new_tokens: int | None = None) -> str:
         messages = [
             {
                 "role": "user",
@@ -409,7 +421,8 @@ class TransformersQwenBackend:
         text = render_qwen_chat_template(self._processor, messages)
         inputs = self._processor(text=[text], images=images or None, return_tensors="pt")
         inputs = inputs.to(self._model.device)
-        max_new_tokens = int(os.getenv("ACCIDENT_VLM_MAX_NEW_TOKENS", "1024"))
+        if max_new_tokens is None:
+            max_new_tokens = _final_max_new_tokens()
         use_cache = os.getenv("ACCIDENT_VLM_USE_CACHE", "0").lower() in {"1", "true", "yes", "on"}
         try:
             import torch  # type: ignore

@@ -279,12 +279,14 @@ def test_collect_evidence_image_paths_can_disable_cap(monkeypatch) -> None:
 
 def test_qwen_generate_json_chunks_images_without_dropping_evidence(monkeypatch) -> None:
     monkeypatch.setenv("ACCIDENT_VLM_IMAGE_CHUNK_SIZE", "2")
+    monkeypatch.setenv("ACCIDENT_VLM_CHUNK_MAX_NEW_TOKENS", "128")
+    monkeypatch.setenv("ACCIDENT_VLM_FINAL_MAX_NEW_TOKENS", "512")
     backend = object.__new__(TransformersQwenBackend)
     backend._load_image = lambda path: f"image:{path}"
     calls = []
 
-    def fake_generate_text(prompt: str, images):
-        calls.append((prompt, list(images or [])))
+    def fake_generate_text(prompt: str, images, max_new_tokens=None):
+        calls.append((prompt, list(images or []), max_new_tokens))
         if images:
             return f"chunk saw {len(images)} images"
         return '{"schema_version":"accident_video_facts.v1","objective_summary":"ok"}'
@@ -294,12 +296,13 @@ def test_qwen_generate_json_chunks_images_without_dropping_evidence(monkeypatch)
     result = backend.generate_json("full prompt", ["a.jpg", "b.jpg", "c.jpg", "d.jpg", "e.jpg"])
 
     assert result["schema_version"] == "accident_video_facts.v1"
-    assert [images for _, images in calls] == [
+    assert [images for _, images, _ in calls] == [
         ["image:a.jpg", "image:b.jpg"],
         ["image:c.jpg", "image:d.jpg"],
         ["image:e.jpg"],
         [],
     ]
+    assert [tokens for _, _, tokens in calls] == [128, 128, 128, 512]
     assert "chunk saw 2 images" in calls[-1][0]
     assert "full prompt" in calls[-1][0]
 
