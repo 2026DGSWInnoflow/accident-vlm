@@ -1,8 +1,10 @@
 import ast
 import json
 import os
+from contextlib import contextmanager
 from functools import lru_cache
 from pathlib import Path
+from threading import Lock
 from typing import Any, Protocol
 
 from accident_vlm.config import PipelineConfig
@@ -18,6 +20,14 @@ Mark unsupported fields as 확인불가.
 Every important event must include confidence and evidence.
 Return a single valid JSON object. Do not include markdown, prose, or reasoning.
 """.strip()
+
+
+LOCAL_QWEN_MODEL_ID = "/home/minsung0830/accident-vlm/models/Qwen3.6-27B"
+QWEN_MODEL_ALIASES = {
+    "Qwen/Qwen3.6-27B": LOCAL_QWEN_MODEL_ID,
+}
+QWEN_BACKEND_LOCK = Lock()
+
 
 OUTPUT_TEMPLATE = {
     "schema_version": "accident_video_facts.v1",
@@ -87,9 +97,20 @@ def compose_with_retry(
             return compose_with_backend(context, backend)
         except Exception as exc:  # noqa: BLE001
             last_error = exc
+            _clear_cuda_cache()
             if attempt == max_attempts - 1:
                 break
     raise ValueError(f"VLM JSON composition failed after {max_attempts} attempts: {last_error}")
+
+
+def _clear_cuda_cache() -> None:
+    try:
+        import torch  # type: ignore
+    except ImportError:
+        return
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        torch.cuda.ipc_collect()
 
 
 def _collect_evidence_image_paths(evidence_package: dict[str, Any]) -> list[str]:
@@ -133,6 +154,24 @@ def _image_priority(section: str, purpose: str) -> int:
     return purpose_weights.get(purpose, section_weights.get(section, 100))
 
 
+def normalize_model_id(model_id: str) -> str:
+    stripped = model_id.strip()
+    if stripped in QWEN_MODEL_ALIASES:
+        return QWEN_MODEL_ALIASES[stripped]
+    path = Path(stripped).expanduser()
+    if path.exists():
+        return str(path.resolve())
+    return stripped
+
+
+def normalize_device(device: str) -> str:
+    allow_override = os.getenv("ACCIDENT_VLM_ALLOW_DEVICE_OVERRIDE", "0") in {"1", "true", "True", "yes"}
+    normalized = (device or "auto").strip() or "auto"
+    if allow_override:
+        return normalized
+    return "auto"
+
+
 def render_qwen_chat_template(processor: Any, messages: list[dict[str, Any]]) -> str:
     return processor.apply_chat_template(
         messages,
@@ -140,6 +179,25 @@ def render_qwen_chat_template(processor: Any, messages: list[dict[str, Any]]) ->
         add_generation_prompt=True,
         enable_thinking=False,
     )
+
+
+@contextmanager
+def disable_transformers_allocator_warmup():
+    if os.getenv("ACCIDENT_VLM_DISABLE_ALLOCATOR_WARMUP", "1") not in {"1", "true", "True", "yes"}:
+        yield
+        return
+    try:
+        import transformers.modeling_utils as modeling_utils  # type: ignore
+    except ImportError:
+        yield
+        return
+
+    original = modeling_utils.caching_allocator_warmup
+    modeling_utils.caching_allocator_warmup = lambda *args, **kwargs: None
+    try:
+        yield
+    finally:
+        modeling_utils.caching_allocator_warmup = original
 
 
 class TransformersQwenBackend:
@@ -163,10 +221,11 @@ class TransformersQwenBackend:
         max_memory = _parse_max_memory(os.getenv("ACCIDENT_VLM_MAX_MEMORY"))
         if max_memory:
             model_kwargs["max_memory"] = max_memory
-        self._model = AutoModelForImageTextToText.from_pretrained(
-            model_id,
-            **model_kwargs,
-        )
+        with disable_transformers_allocator_warmup():
+            self._model = AutoModelForImageTextToText.from_pretrained(
+                model_id,
+                **model_kwargs,
+            )
         self._model.eval()
 
     def generate_json(self, prompt: str, image_paths: list[str]) -> dict[str, Any]:
@@ -264,9 +323,17 @@ def parse_json_response(text: str) -> dict[str, Any]:
 _parse_json_response = parse_json_response
 
 
-@lru_cache(maxsize=2)
+@lru_cache(maxsize=1)
+def _get_qwen_backend(normalized_model_id: str, normalized_device: str = "auto") -> VLMBackend:
+    return TransformersQwenBackend(normalized_model_id, device=normalized_device)
+
+
 def get_qwen_backend(model_id: str, device: str = "auto") -> VLMBackend:
-    return TransformersQwenBackend(model_id, device=device)
+    with QWEN_BACKEND_LOCK:
+        return _get_qwen_backend(normalize_model_id(model_id), normalize_device(device))
+
+
+get_qwen_backend.cache_clear = _get_qwen_backend.cache_clear  # type: ignore[attr-defined]
 
 
 def create_qwen_backend(config: PipelineConfig) -> VLMBackend:

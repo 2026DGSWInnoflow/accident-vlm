@@ -3,7 +3,11 @@ from accident_vlm.modules.vlm_composer import (
     build_vlm_prompt,
     compose_with_backend,
     compose_with_retry,
+    _clear_cuda_cache,
     get_qwen_backend,
+    normalize_model_id,
+    normalize_device,
+    disable_transformers_allocator_warmup,
     parse_json_response,
     render_qwen_chat_template,
     _configure_transformers_loading,
@@ -224,3 +228,89 @@ def test_configure_transformers_loading_can_keep_allocator_warmup(monkeypatch) -
     _configure_transformers_loading(FakeModelingUtils)
 
     assert FakeModelingUtils.caching_allocator_warmup() == "original"
+
+
+def test_compose_with_retry_clears_cuda_cache_after_failed_attempt(monkeypatch) -> None:
+    calls = []
+    backend = FlakyBackend()
+    monkeypatch.setattr(
+        "accident_vlm.modules.vlm_composer._clear_cuda_cache",
+        lambda: calls.append("cleared"),
+    )
+
+    compose_with_retry(
+        PipelineContext(video_path="sample.mp4", evidence_package={"frames": []}),
+        backend,
+        max_attempts=2,
+    )
+
+    assert calls == ["cleared"]
+
+
+def test_normalize_model_id_maps_qwen_alias_to_local_model() -> None:
+    assert normalize_model_id("Qwen/Qwen3.6-27B") == "/home/minsung0830/accident-vlm/models/Qwen3.6-27B"
+
+
+def test_get_qwen_backend_reuses_local_model_for_qwen_alias(monkeypatch) -> None:
+    created = []
+
+    class FakeQwenBackend:
+        def __init__(self, model_id: str, device: str = "auto") -> None:
+            created.append((model_id, device))
+
+    monkeypatch.setattr(
+        "accident_vlm.modules.vlm_composer.TransformersQwenBackend",
+        FakeQwenBackend,
+    )
+    get_qwen_backend.cache_clear()
+
+    first = get_qwen_backend("/home/minsung0830/accident-vlm/models/Qwen3.6-27B", "auto")
+    second = get_qwen_backend("Qwen/Qwen3.6-27B", "auto")
+
+    assert first is second
+    assert created == [("/home/minsung0830/accident-vlm/models/Qwen3.6-27B", "auto")]
+
+
+def test_normalize_device_pins_backend_to_auto_by_default(monkeypatch) -> None:
+    monkeypatch.delenv("ACCIDENT_VLM_ALLOW_DEVICE_OVERRIDE", raising=False)
+
+    assert normalize_device("cuda:0") == "auto"
+    assert normalize_device(" balanced_low_0 ") == "auto"
+    assert normalize_device("") == "auto"
+
+
+def test_get_qwen_backend_reuses_instance_across_device_aliases(monkeypatch) -> None:
+    created = []
+
+    class FakeQwenBackend:
+        def __init__(self, model_id: str, device: str = "auto") -> None:
+            created.append((model_id, device))
+
+    monkeypatch.delenv("ACCIDENT_VLM_ALLOW_DEVICE_OVERRIDE", raising=False)
+    monkeypatch.setattr(
+        "accident_vlm.modules.vlm_composer.TransformersQwenBackend",
+        FakeQwenBackend,
+    )
+    get_qwen_backend.cache_clear()
+
+    first = get_qwen_backend("Qwen/Qwen3.6-27B", "cuda:0")
+    second = get_qwen_backend("/home/minsung0830/accident-vlm/models/Qwen3.6-27B", "balanced_low_0")
+
+    assert first is second
+    assert created == [("/home/minsung0830/accident-vlm/models/Qwen3.6-27B", "auto")]
+
+
+def test_disable_transformers_allocator_warmup_patches_and_restores(monkeypatch) -> None:
+    import types
+
+    calls = []
+    module = types.SimpleNamespace(caching_allocator_warmup=lambda *args, **kwargs: calls.append("original"))
+    monkeypatch.setitem(__import__("sys").modules, "transformers.modeling_utils", module)
+
+    with disable_transformers_allocator_warmup():
+        module.caching_allocator_warmup()
+        assert calls == []
+
+    module.caching_allocator_warmup()
+    assert calls == ["original"]
+
