@@ -72,19 +72,22 @@ def analyze_traffic_control(
         color_scores: dict[str, float] = {}
         evidence: dict[str, list[str]] = {}
         crops_by_color: dict[str, list[dict]] = {}
+        vote_counts: Counter[str] = Counter()
         for color, score, frame_id, crop_record in signal_votes:
             color_scores[color] = color_scores.get(color, 0.0) + score
+            vote_counts[color] += 1
             evidence.setdefault(color, []).append(frame_id)
             if crop_record:
                 crops_by_color.setdefault(color, []).append(crop_record)
-        selected_color = max(color_scores, key=color_scores.get)
+        selected_color, confidence, vote_diagnostics = _choose_signal_vote(color_scores, vote_counts)
         signal = {
             "value": selected_color,
             "visible": True,
             "method": "traffic_light_hsv_crop_temporal_vote",
-            "confidence": "medium" if len(evidence[selected_color]) >= 2 else "low",
+            "confidence": confidence,
             "evidence": evidence[selected_color],
             "crops": crops_by_color.get(selected_color, []),
+            "vote_diagnostics": vote_diagnostics,
             "note": "HSV crop 후보 기반이므로 작은 신호등/역광에서는 confidence를 낮게 유지",
         }
     else:
@@ -176,6 +179,31 @@ def _vote_signs(signs: list[dict]) -> list[dict]:
             }
         )
     return voted
+
+
+def _choose_signal_vote(
+    color_scores: dict[str, float],
+    vote_counts: Counter[str],
+) -> tuple[str, str, dict]:
+    ordered = sorted(color_scores.items(), key=lambda item: item[1], reverse=True)
+    selected_color, selected_score = ordered[0]
+    runner_up_score = ordered[1][1] if len(ordered) > 1 else 0.0
+    margin = selected_score - runner_up_score
+    vote_count = vote_counts[selected_color]
+    confidence = "low"
+    if vote_count >= 3 and margin >= 20:
+        confidence = "high"
+    elif vote_count >= 2 and margin >= 8:
+        confidence = "medium"
+    return (
+        selected_color,
+        confidence,
+        {
+            "score_by_color": {color: round(score, 3) for color, score in color_scores.items()},
+            "vote_count_by_color": dict(vote_counts),
+            "winner_margin": round(margin, 3),
+        },
+    )
 
 
 def _detect_signal_candidates(image: np.ndarray) -> list[dict]:

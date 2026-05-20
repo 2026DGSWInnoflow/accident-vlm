@@ -8,6 +8,7 @@ from threading import Lock
 from typing import Any, Protocol
 
 from accident_vlm.config import PipelineConfig
+from accident_vlm.modules.fact_verifier import verify_vlm_payload_against_context
 from accident_vlm.modules.schema_guard import validate_final_output
 from accident_vlm.schemas.final_output import AccidentFactOutput
 from accident_vlm.schemas.preprocessing import PipelineContext
@@ -122,7 +123,10 @@ def _collect_evidence_image_paths(evidence_package: dict[str, Any]) -> list[str]
             if not isinstance(item, dict) or not item.get("path"):
                 continue
             purpose = str(item.get("purpose", ""))
-            weighted_paths.append((_image_priority(section, purpose), item["path"]))
+            priority = _image_priority(section, purpose)
+            if item.get("importance_score") is not None:
+                priority -= int(item["importance_score"])
+            weighted_paths.append((priority, item["path"]))
 
     image_paths: list[str] = []
     for _, path in sorted(weighted_paths, key=lambda entry: entry[0]):
@@ -346,6 +350,7 @@ def compose_final_facts(
     backend: VLMBackend,
 ) -> AccidentFactOutput:
     payload = compose_with_retry(context, backend)
+    payload = verify_vlm_payload_against_context(payload, context)
     return validate_final_output(payload)
 
 

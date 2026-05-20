@@ -2,12 +2,13 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
+from accident_vlm.modules.evidence_scoring import rank_evidence_images, summarize_evidence_images
 from accident_vlm.schemas.preprocessing import PipelineContext
 
 
 def build_evidence_package(context: PipelineContext) -> dict:
     metadata = context.video_metadata.model_dump() if context.video_metadata else {}
-    evidence_images = collect_evidence_images(context)
+    evidence_images = rank_evidence_images(collect_evidence_images(context))
     context.evidence_images = deepcopy(evidence_images)
     return {
         "frames": [frame.model_dump() for frame in context.selected_frames],
@@ -26,6 +27,7 @@ def build_evidence_package(context: PipelineContext) -> dict:
             "speed_estimates": deepcopy(context.speed_and_distance),
             "traffic_control": deepcopy(context.traffic_control),
             "event_candidates": deepcopy(context.event_candidates),
+            "evidence_summary": summarize_evidence_images(evidence_images),
         },
     }
 

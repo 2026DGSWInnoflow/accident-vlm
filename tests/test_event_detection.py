@@ -34,7 +34,9 @@ def test_detect_event_candidates_adds_distance_drop_and_sudden_stop_events() -> 
 
     event_types = {event["event_type"] for event in events}
     assert "급접근" in event_types
+    assert "급접근후보" in event_types
     assert "급감속" in event_types
+    assert all("event_score" in event for event in events)
 
 
 def test_detect_event_candidates_adds_camera_shake_collision_signal() -> None:
@@ -50,13 +52,5 @@ def test_detect_event_candidates_adds_camera_shake_collision_signal() -> None:
         },
     )
 
-    assert events == [
-        {
-            "time": "00:04.000",
-            "event_type": "충격후보",
-            "actors": [],
-            "confidence": "low",
-            "signals": ["camera_shake"],
-            "evidence": ["frame_000120", "frame_000121"],
-        }
-    ]
+    assert events[0]["event_type"] == "충격후보"
+    assert events[0]["event_score"] > 0

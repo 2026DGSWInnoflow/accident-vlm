@@ -26,6 +26,7 @@ from accident_vlm.modules.road_geometry import analyze_road_geometry
 from accident_vlm.modules.scene import classify_scene_candidates
 from accident_vlm.modules.speed_distance import estimate_speed_and_distance
 from accident_vlm.modules.traffic_control import analyze_traffic_control
+from accident_vlm.modules.track_consolidation import consolidate_tracks
 from accident_vlm.modules.video_quality import analyze_input_quality
 from accident_vlm.schemas.preprocessing import PipelineContext, VideoMetadata
 
@@ -96,6 +97,7 @@ def analyze_video_pre_vlm(
             active_config.object_detector_model,
         )
         context.tracks = detect_and_track_actors(context.selected_frames, detector)
+        context.tracks = consolidate_tracks(context.tracks)
         context.overlays, context.crops = build_visual_evidence(
             context.selected_frames,
             context.tracks,
@@ -157,7 +159,7 @@ def analyze_video_pre_vlm(
                 stride_frames=active_config.segment_tracking_stride_frames,
                 max_frames_per_segment=active_config.max_segment_tracking_frames,
             )
-            context.tracks = [*context.tracks, *segment_tracks]
+            context.tracks = consolidate_tracks([*context.tracks, *segment_tracks])
             context.overlays, context.crops = build_visual_evidence(
                 context.selected_frames,
                 context.tracks,

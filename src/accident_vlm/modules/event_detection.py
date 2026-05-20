@@ -40,6 +40,8 @@ def detect_event_candidates(
         approach_event = _detect_distance_drop(track)
         if approach_event:
             events.append(approach_event)
+        for area_event in _detect_rapid_area_changes(track):
+            events.append(area_event)
 
     positions_by_time: dict[str, list[tuple[str, list[int], str]]] = {}
     for track in tracks:
@@ -55,7 +57,7 @@ def detect_event_candidates(
             iou = _bbox_iou(first[1], second[1])
             if iou >= 0.05:
                 events.append(
-                    {
+                    _with_event_score({
                         "time": time,
                         "event_type": "접촉",
                         "actors": [first[0], second[0]],
@@ -63,7 +65,7 @@ def detect_event_candidates(
                         "signals": ["bbox_overlap"],
                         "iou": round(iou, 4),
                         "evidence": [first[2], second[2]],
-                    }
+                    })
                 )
 
     if speed_and_distance:
@@ -73,28 +75,31 @@ def detect_event_candidates(
         for item in speed_and_distance.get("relative_motion", []):
             if item.get("relative_speed_trend") == "접근":
                 events.append(
-                    {
+                    _with_event_score({
                         "time": item.get("time", "확인불가"),
                         "event_type": "접근",
                         "actors": [item.get("actor_id")],
                         "confidence": item.get("confidence", "low"),
                         "signals": ["relative_motion"],
-                    }
+                    })
                 )
     if input_quality:
         shake_score = input_quality.get("camera_shake_score", {})
         if isinstance(shake_score, dict) and float(shake_score.get("value") or 0.0) >= 20:
             events.append(
-                {
+                _with_event_score({
                     "time": shake_score.get("time", "확인불가"),
                     "event_type": "충격후보",
                     "actors": [],
                     "confidence": "low",
                     "signals": ["camera_shake"],
                     "evidence": shake_score.get("evidence", []),
-                }
+                })
             )
-    return sorted(events, key=lambda event: event.get("time") or "")
+    return sorted(
+        [_with_event_score(event) for event in events],
+        key=lambda event: (-float(event.get("event_score", 0.0)), event.get("time") or ""),
+    )
 
 
 def _bbox_area(bbox: list[int]) -> float:
@@ -111,7 +116,7 @@ def _detect_distance_drop(track: dict) -> dict | None:
     last_area = _bbox_area(positions[-1].get("bbox", []))
     if first_area <= 0 or last_area < first_area * 2.5:
         return None
-    return {
+    return _with_event_score({
         "time": positions[-1].get("time"),
         "event_type": "급접근",
         "actors": [track.get("track_id")],
@@ -119,7 +124,31 @@ def _detect_distance_drop(track: dict) -> dict | None:
         "signals": ["bbox_area_increase"],
         "evidence": [positions[0].get("frame_id"), positions[-1].get("frame_id")],
         "area_ratio": round(last_area / first_area, 3),
-    }
+    })
+
+
+def _detect_rapid_area_changes(track: dict) -> list[dict]:
+    positions = track.get("positions", [])
+    events: list[dict] = []
+    for previous, current in zip(positions, positions[1:]):
+        previous_area = _bbox_area(previous.get("bbox", []))
+        current_area = _bbox_area(current.get("bbox", []))
+        if previous_area <= 0 or current_area < previous_area * 1.8:
+            continue
+        events.append(
+            _with_event_score(
+                {
+                    "time": current.get("time"),
+                    "event_type": "급접근후보",
+                    "actors": [track.get("track_id")],
+                    "confidence": "medium" if current_area >= previous_area * 2.8 else "low",
+                    "signals": ["bbox_area_frame_to_frame_increase"],
+                    "evidence": [previous.get("frame_id"), current.get("frame_id")],
+                    "area_ratio": round(current_area / previous_area, 3),
+                }
+            )
+        )
+    return events
 
 
 def _detect_sudden_stop(speed_and_distance: dict) -> dict | None:
@@ -137,7 +166,7 @@ def _detect_sudden_stop(speed_and_distance: dict) -> dict | None:
     delta = float(first["numeric_kmh"]) - float(last["numeric_kmh"])
     if delta < 20:
         return None
-    return {
+    return _with_event_score({
         "time": last.get("time", "확인불가"),
         "event_type": "급감속",
         "actors": ["ego_vehicle"],
@@ -145,4 +174,24 @@ def _detect_sudden_stop(speed_and_distance: dict) -> dict | None:
         "signals": ["speed_drop"],
         "evidence": [*first.get("evidence", []), *last.get("evidence", [])],
         "speed_delta_kmh": round(delta, 3),
+    })
+
+
+def _with_event_score(event: dict) -> dict:
+    confidence_scores = {"high": 30, "medium": 20, "low": 10, "unknown": 0}
+    signal_scores = {
+        "bbox_overlap": 35,
+        "bbox_area_increase": 28,
+        "bbox_area_frame_to_frame_increase": 24,
+        "speed_drop": 30,
+        "track_lateral_motion": 18,
+        "relative_motion": 14,
+        "camera_shake": 12,
     }
+    score = confidence_scores.get(str(event.get("confidence", "unknown")), 0)
+    score += sum(signal_scores.get(str(signal), 0) for signal in event.get("signals", []))
+    score += min(10, len([item for item in event.get("evidence", []) if item]) * 3)
+    if event.get("event_type") in {"접촉", "충격후보"}:
+        score += 12
+    event["event_score"] = max(0, min(100, int(score)))
+    return event

@@ -141,3 +141,22 @@ def test_summarize_ocr_observations_removes_speed_outliers_and_records_candidate
         {"frame_id": "f2", "value": 49.0, "confidence": 0.9},
         {"frame_id": "f3", "value": 240.0, "confidence": 0.9},
     ]
+
+
+def test_summarize_ocr_observations_rejects_implausible_temporal_speed_jump() -> None:
+    summary = summarize_ocr_observations(
+        [
+            {"frame_id": "f1", "confidence": 0.9, "parsed": {"speed_kmh": 40.0}},
+            {"frame_id": "f2", "confidence": 0.9, "parsed": {"speed_kmh": 42.0}},
+            {"frame_id": "f3", "confidence": 0.9, "parsed": {"speed_kmh": 88.0}},
+            {"frame_id": "f4", "confidence": 0.9, "parsed": {"speed_kmh": 90.0}},
+        ]
+    )
+
+    assert summary["speed"]["numeric_kmh"] == 41.0
+    assert {
+        "frame_id": "f3",
+        "value": 88.0,
+        "reason": "temporal_jump",
+        "previous_value": 42.0,
+    } in summary["speed"]["rejected_outliers"]

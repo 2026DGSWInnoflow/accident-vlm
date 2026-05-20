@@ -7,6 +7,7 @@ from rich import print
 
 from accident_vlm import __version__
 from accident_vlm.config import PipelineConfig, QUALITY_OBJECT_DETECTOR_BACKEND
+from accident_vlm.evaluation import evaluate_result_against_label, load_dataset_labels, summarize_evaluation
 from accident_vlm.modules.vlm_composer import compose_final_facts, create_qwen_backend, write_final_facts
 from accident_vlm.pipeline import analyze_video_pre_vlm
 
@@ -111,6 +112,34 @@ def analyze_full(
     write_final_facts(final_facts, final_output_path)
     print(f"Pre-VLM context written to {pre_vlm_output_path}")
     print(f"Final accident facts written to {final_output_path}")
+
+
+@app.command()
+def evaluate_dataset(
+    result_dir: Annotated[Path, typer.Argument(help="Directory containing accident_facts JSON files.")],
+    label_root: Annotated[Path, typer.Argument(help="AI Hub label root containing dataset JSON labels.")],
+    output_path: Annotated[Path, typer.Option("--output", help="Evaluation report path.")] = Path(
+        "outputs/dataset_evaluation.json"
+    ),
+) -> None:
+    labels = load_dataset_labels(label_root)
+    items = []
+    for result_path in sorted(result_dir.rglob("*.json")):
+        try:
+            result = json.loads(result_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            continue
+        label = labels.get(result_path.stem)
+        if label is None:
+            continue
+        item = evaluate_result_against_label(result, label)
+        item["result_path"] = str(result_path)
+        item["label_path"] = label["path"]
+        items.append(item)
+    report = {"summary": summarize_evaluation(items), "items": items}
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"Dataset evaluation written to {output_path}")
 
 
 if __name__ == "__main__":

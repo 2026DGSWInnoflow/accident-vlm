@@ -316,6 +316,8 @@ def _summarize_speed_values(values: list[tuple[float, str, float]]) -> dict:
         for value, frame_id, confidence in values
     ]
     filtered_values, rejected_outliers = _filter_speed_outliers(values)
+    filtered_values, rejected_jumps = _filter_temporal_speed_jumps(filtered_values)
+    rejected_outliers = [*rejected_outliers, *rejected_jumps]
     speeds = [value for value, _, _ in filtered_values]
     selected = float(median(speeds))
     spread = max(speeds) - min(speeds)
@@ -354,6 +356,30 @@ def _filter_speed_outliers(
         else:
             rejected.append({"frame_id": frame_id, "value": value})
     return filtered or plausible, rejected
+
+
+def _filter_temporal_speed_jumps(
+    values: list[tuple[float, str, float]],
+    max_step_kmh: float = 45.0,
+) -> tuple[list[tuple[float, str, float]], list[dict]]:
+    if len(values) < 3:
+        return values, []
+    filtered = [values[0]]
+    rejected: list[dict] = []
+    for value, frame_id, confidence in values[1:]:
+        previous_value = filtered[-1][0]
+        if abs(value - previous_value) <= max_step_kmh:
+            filtered.append((value, frame_id, confidence))
+            continue
+        rejected.append(
+            {
+                "frame_id": frame_id,
+                "value": value,
+                "reason": "temporal_jump",
+                "previous_value": previous_value,
+            }
+        )
+    return filtered if len(filtered) >= 2 else values, rejected
 
 
 def _summarize_gps_values(values: list[tuple[dict, str, float]]) -> dict:

@@ -91,14 +91,16 @@ def test_build_evidence_package_is_snapshot_of_mutable_context_fields() -> None:
     assert precomputed_facts["tracks"][0]["positions"][0]["x"] == 10
     assert precomputed_facts["road_geometry"]["lanes"][0]["direction"] == "forward"
     assert evidence_package["selected_segments"][0]["end"] == "00:02.000"
-    assert [image["path"] for image in evidence_package["evidence_images"]] == [
+    assert {image["path"] for image in evidence_package["evidence_images"]} == {
         "/tmp/tracking.jpg",
         "/tmp/actor.jpg",
         "/tmp/ocr_roi.jpg",
         "/tmp/lane_overlay.jpg",
         "/tmp/lane_mask.jpg",
         "/tmp/signal_crop.jpg",
-    ]
+    }
+    assert evidence_package["evidence_images"][0]["path"] == "/tmp/signal_crop.jpg"
+    assert "importance_score" in evidence_package["evidence_images"][0]
 
 
 def test_analyze_video_pre_vlm_merges_motion_keyframes_before_extraction(

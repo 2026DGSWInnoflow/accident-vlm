@@ -36,6 +36,7 @@ def test_analyze_traffic_control_creates_signal_crop_and_speed_limit_sign(tmp_pa
     assert result["signal"]["value"] == "적색"
     assert result["signal"]["method"] == "traffic_light_hsv_crop_temporal_vote"
     assert result["signal"]["crops"]
+    assert result["signal"]["vote_diagnostics"]["vote_count_by_color"]["적색"] >= 1
     assert cv2.imread(result["signal"]["crops"][0]["path"]) is not None
     assert result["signs"][0]["value"] == "제한속도 30"
     assert result["signs"][0]["evidence"] == ["frame_000001"]
