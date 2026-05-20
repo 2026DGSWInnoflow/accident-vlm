@@ -57,19 +57,21 @@ OUTPUT_TEMPLATE = {
 }
 
 
-def build_vlm_prompt(context: PipelineContext) -> str:
+def build_vlm_prompt(context: PipelineContext, compact: bool = False) -> str:
+    evidence_package = _compact_evidence_package(context.evidence_package) if compact else context.evidence_package
     evidence_package_json = json.dumps(
-        context.evidence_package,
+        evidence_package,
         ensure_ascii=False,
         indent=2,
         sort_keys=True,
     )
+    evidence_heading = "Compact evidence package" if compact else "Evidence package"
     return (
         f"{SYSTEM_PROMPT}\n\n"
         "Return only JSON matching this exact shape. Keep enum-like values in Korean "
         "when they are visible; use 확인불가/unknown when unsupported.\n"
         f"{json.dumps(OUTPUT_TEMPLATE, ensure_ascii=False, indent=2)}\n\n"
-        "Evidence package:\n"
+        f"{evidence_heading}:\n"
         f"{evidence_package_json}"
     )
 
@@ -83,8 +85,9 @@ def compose_with_backend(
     context: PipelineContext,
     backend: VLMBackend,
     image_limit: int | None = None,
+    compact_prompt: bool = False,
 ) -> dict[str, Any]:
-    prompt = build_vlm_prompt(context)
+    prompt = build_vlm_prompt(context, compact=compact_prompt)
     image_paths = _collect_evidence_image_paths(context.evidence_package, max_images=image_limit)
     return backend.generate_json(prompt=prompt, image_paths=image_paths)
 
@@ -98,14 +101,15 @@ def compose_with_retry(
         raise ValueError("max_attempts must be positive")
     last_error: Exception | None = None
     image_limit: int | None = None
+    compact_prompt = False
     for attempt in range(max_attempts):
         try:
-            return compose_with_backend(context, backend, image_limit=image_limit)
+            return compose_with_backend(context, backend, image_limit=image_limit, compact_prompt=compact_prompt)
         except Exception as exc:  # noqa: BLE001
             last_error = exc
             _clear_cuda_cache()
             if _is_cuda_oom(exc):
-                image_limit = _next_oom_image_limit(image_limit)
+                image_limit, compact_prompt = _next_oom_strategy(image_limit, compact_prompt)
             if attempt == max_attempts - 1:
                 break
     raise ValueError(f"VLM JSON composition failed after {max_attempts} attempts: {last_error}")
@@ -116,13 +120,110 @@ def _is_cuda_oom(error: Exception) -> bool:
     return "cuda out of memory" in message or ("out of memory" in message and "cuda" in message)
 
 
-def _next_oom_image_limit(current_limit: int | None) -> int:
+def _next_oom_strategy(current_limit: int | None, compact_prompt: bool) -> tuple[int, bool]:
     retry_limit = int(os.getenv("ACCIDENT_VLM_OOM_RETRY_MAX_IMAGES", "4"))
     if current_limit is None:
-        return max(retry_limit, 0)
+        return max(retry_limit, 0), compact_prompt
     if current_limit > 0:
-        return 0
-    return current_limit
+        return 0, True
+    return current_limit, True
+
+
+def _compact_evidence_package(evidence_package: dict[str, Any]) -> dict[str, Any]:
+    facts = evidence_package.get("precomputed_facts", {})
+    compact_facts = {
+        "metadata": facts.get("metadata", {}),
+        "input_quality": facts.get("input_quality", {}),
+        "ocr_summary": facts.get("ocr_summary", {}),
+        "scene_type_candidates": _limit_list(facts.get("scene_type_candidates", []), 5),
+        "tracks": [_compact_track(track) for track in _limit_list(facts.get("tracks", []), 8)],
+        "road_geometry": facts.get("road_geometry", {}),
+        "speed_estimates": facts.get("speed_estimates", {}),
+        "traffic_control": facts.get("traffic_control", {}),
+        "event_candidates": _limit_list(facts.get("event_candidates", []), 12),
+        "evidence_summary": facts.get("evidence_summary", {}),
+    }
+    return {
+        "frames": _compact_image_records(evidence_package.get("frames", []), 12),
+        "selected_segments": _limit_list(evidence_package.get("selected_segments", []), 8),
+        "overlays": _compact_image_records(evidence_package.get("overlays", []), 8),
+        "crops": _compact_image_records(evidence_package.get("crops", []), 8),
+        "evidence_images": _compact_image_records(evidence_package.get("evidence_images", []), 16),
+        "precomputed_facts": compact_facts,
+    }
+
+
+def _limit_list(value: Any, limit: int) -> list[Any]:
+    if not isinstance(value, list):
+        return []
+    return value[:limit]
+
+
+def _compact_image_records(value: Any, limit: int) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for item in _limit_list(value, limit):
+        if not isinstance(item, dict):
+            continue
+        records.append(
+            {
+                key: item.get(key)
+                for key in (
+                    "id",
+                    "time",
+                    "frame_index",
+                    "purpose",
+                    "source",
+                    "frame_id",
+                    "track_id",
+                    "type",
+                    "confidence",
+                    "importance_score",
+                    "rank_reason",
+                )
+                if item.get(key) is not None
+            }
+        )
+    return records
+
+
+def _compact_track(track: Any) -> dict[str, Any]:
+    if not isinstance(track, dict):
+        return {}
+    compact = {
+        key: track.get(key)
+        for key in (
+            "track_id",
+            "type",
+            "confidence",
+            "movement_candidate",
+            "relative_position_start",
+            "relative_position_end",
+            "tracking_method",
+            "source_stage",
+        )
+        if track.get(key) is not None
+    }
+    positions = track.get("positions", [])
+    if isinstance(positions, list) and positions:
+        compact["positions"] = _sample_positions(positions)
+    return compact
+
+
+def _sample_positions(positions: list[Any]) -> list[dict[str, Any]]:
+    indexes = sorted({0, len(positions) // 2, len(positions) - 1})
+    sampled: list[dict[str, Any]] = []
+    for index in indexes:
+        item = positions[index]
+        if not isinstance(item, dict):
+            continue
+        sampled.append(
+            {
+                key: item.get(key)
+                for key in ("frame_id", "time", "center", "bbox", "relative_position")
+                if item.get(key) is not None
+            }
+        )
+    return sampled
 
 
 def _clear_cuda_cache() -> None:
@@ -276,7 +377,8 @@ class TransformersQwenBackend:
                 "Analyze only this evidence image chunk. Do not decide fault or legal liability. "
                 "Return concise Korean observations grounded only in visible evidence.\n"
                 f"Chunk {chunk_index}/{total_chunks}; image indexes {start + 1}-{start + len(chunk_images)}.\n\n"
-                f"Original task:\n{prompt}"
+                "Focus on visible actors, traffic lights/signs, road type, lane markings, "
+                "weather/visibility, impact candidates, and uncertainty."
             )
             chunk_summaries.append(
                 {

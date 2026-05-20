@@ -50,6 +50,19 @@ class OomThenRecordingBackend:
         return {"schema_version": "accident_video_facts.v1", "objective_summary": "ok"}
 
 
+class OomUntilCompactBackend:
+    def __init__(self) -> None:
+        self.image_counts: list[int] = []
+        self.prompts: list[str] = []
+
+    def generate_json(self, prompt: str, image_paths: list[str]) -> dict:
+        self.image_counts.append(len(image_paths))
+        self.prompts.append(prompt)
+        if len(self.image_counts) < 3:
+            raise RuntimeError("CUDA out of memory. Tried to allocate 13.37 GiB.")
+        return {"schema_version": "accident_video_facts.v1", "objective_summary": "compact ok"}
+
+
 def test_build_vlm_prompt_includes_system_prompt_schema_and_evidence_package() -> None:
     context = PipelineContext(
         video_path="sample.mp4",
@@ -192,6 +205,39 @@ def test_compose_with_retry_reduces_images_after_cuda_oom(monkeypatch) -> None:
 
     assert result["objective_summary"] == "ok"
     assert backend.image_counts == [12, 4]
+
+
+def test_compose_with_retry_uses_compact_text_only_prompt_after_repeated_cuda_oom(monkeypatch) -> None:
+    monkeypatch.setenv("ACCIDENT_VLM_MAX_IMAGES", "12")
+    monkeypatch.setenv("ACCIDENT_VLM_OOM_RETRY_MAX_IMAGES", "4")
+    backend = OomUntilCompactBackend()
+    context = PipelineContext(
+        video_path="sample.mp4",
+        evidence_package={
+            "frames": [
+                {"id": f"frame-{index}", "path": f"/tmp/frame-{index}.jpg", "verbose": "x" * 200}
+                for index in range(100)
+            ],
+            "precomputed_facts": {
+                "tracks": [
+                    {
+                        "track_id": "T1",
+                        "type": "car",
+                        "positions": [{"frame_id": f"frame-{index}", "bbox": [1, 2, 3, 4]} for index in range(80)],
+                    }
+                ],
+                "event_candidates": [{"event_type": "접촉", "event_score": 80}],
+            },
+        },
+    )
+
+    result = compose_with_retry(context, backend, max_attempts=3)
+
+    assert result["objective_summary"] == "compact ok"
+    assert backend.image_counts == [12, 4, 0]
+    assert "Compact evidence package" in backend.prompts[-1]
+    assert "frame-99" not in backend.prompts[-1]
+    assert "x" * 200 not in backend.prompts[-1]
 
 
 def test_collect_evidence_image_paths_caps_and_prioritizes_images(monkeypatch) -> None:

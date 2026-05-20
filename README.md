@@ -78,7 +78,7 @@ export ACCIDENT_VLM_MAX_MEMORY="0:22GiB,1:22GiB,2:22GiB,3:22GiB,cpu:64GiB"
 By default the VLM receives the top 12 prioritized evidence images resized to a
 768px max side with a 1024-token generation cap. Generation cache is disabled
 by default to reduce GPU0 KV-cache pressure, and CUDA OOM retries automatically
-fall back to fewer images before trying text-only evidence. Use
+fall back to fewer images before trying compact text-only evidence. Use
 `ACCIDENT_VLM_MAX_IMAGES=0` to disable the initial cap on larger servers, or set
 a smaller value for memory-constrained servers:
 
