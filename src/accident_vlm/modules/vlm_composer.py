@@ -146,12 +146,14 @@ class TransformersQwenBackend:
     def __init__(self, model_id: str, device: str = "auto") -> None:
         try:
             from PIL import Image  # type: ignore
+            import transformers.modeling_utils as modeling_utils  # type: ignore
             from transformers import AutoModelForImageTextToText, AutoProcessor  # type: ignore
         except ImportError as exc:
             raise RuntimeError("install accident-vlm[vlm] on the server to use Qwen backend") from exc
 
         self._image_cls = Image
         self._processor = AutoProcessor.from_pretrained(model_id, trust_remote_code=True)
+        _configure_transformers_loading(modeling_utils)
         model_kwargs = {
             "device_map": device,
             "dtype": "auto",
@@ -226,6 +228,17 @@ def _parse_max_memory(raw_value: str | None) -> dict[Any, str]:
             normalized_key = int(normalized_key)
         max_memory[normalized_key] = value.strip()
     return max_memory
+
+
+def _configure_transformers_loading(modeling_utils: Any) -> None:
+    disable_warmup = os.getenv("ACCIDENT_VLM_DISABLE_ALLOCATOR_WARMUP", "1").lower()
+    if disable_warmup not in {"1", "true", "yes", "on"}:
+        return
+
+    def _noop_allocator_warmup(*_args: Any, **_kwargs: Any) -> None:
+        return None
+
+    modeling_utils.caching_allocator_warmup = _noop_allocator_warmup
 
 
 def parse_json_response(text: str) -> dict[str, Any]:

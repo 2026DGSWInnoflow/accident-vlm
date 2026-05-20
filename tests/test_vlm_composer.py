@@ -6,6 +6,7 @@ from accident_vlm.modules.vlm_composer import (
     get_qwen_backend,
     parse_json_response,
     render_qwen_chat_template,
+    _configure_transformers_loading,
     _collect_evidence_image_paths,
     _parse_max_memory,
 )
@@ -197,3 +198,29 @@ def test_parse_max_memory_accepts_gpu_and_cpu_entries() -> None:
         3: "22GiB",
         "cpu": "64GiB",
     }
+
+
+def test_configure_transformers_loading_disables_allocator_warmup(monkeypatch) -> None:
+    class FakeModelingUtils:
+        @staticmethod
+        def caching_allocator_warmup() -> str:
+            return "original"
+
+    monkeypatch.setenv("ACCIDENT_VLM_DISABLE_ALLOCATOR_WARMUP", "1")
+
+    _configure_transformers_loading(FakeModelingUtils)
+
+    assert FakeModelingUtils.caching_allocator_warmup() is None
+
+
+def test_configure_transformers_loading_can_keep_allocator_warmup(monkeypatch) -> None:
+    class FakeModelingUtils:
+        @staticmethod
+        def caching_allocator_warmup() -> str:
+            return "original"
+
+    monkeypatch.setenv("ACCIDENT_VLM_DISABLE_ALLOCATOR_WARMUP", "0")
+
+    _configure_transformers_loading(FakeModelingUtils)
+
+    assert FakeModelingUtils.caching_allocator_warmup() == "original"
