@@ -39,6 +39,17 @@ class FlakyBackend:
         return {"schema_version": "accident_video_facts.v1", "objective_summary": "ok"}
 
 
+class OomThenRecordingBackend:
+    def __init__(self) -> None:
+        self.image_counts: list[int] = []
+
+    def generate_json(self, prompt: str, image_paths: list[str]) -> dict:
+        self.image_counts.append(len(image_paths))
+        if len(self.image_counts) == 1:
+            raise RuntimeError("CUDA out of memory. Tried to allocate 2.35 GiB.")
+        return {"schema_version": "accident_video_facts.v1", "objective_summary": "ok"}
+
+
 def test_build_vlm_prompt_includes_system_prompt_schema_and_evidence_package() -> None:
     context = PipelineContext(
         video_path="sample.mp4",
@@ -164,6 +175,23 @@ def test_compose_with_retry_retries_after_json_failure() -> None:
 
     assert backend.calls == 2
     assert result["objective_summary"] == "ok"
+
+
+def test_compose_with_retry_reduces_images_after_cuda_oom(monkeypatch) -> None:
+    monkeypatch.setenv("ACCIDENT_VLM_MAX_IMAGES", "12")
+    monkeypatch.setenv("ACCIDENT_VLM_OOM_RETRY_MAX_IMAGES", "4")
+    backend = OomThenRecordingBackend()
+    context = PipelineContext(
+        video_path="sample.mp4",
+        evidence_package={
+            "frames": [{"path": f"/tmp/frame-{index}.jpg"} for index in range(12)],
+        },
+    )
+
+    result = compose_with_retry(context, backend, max_attempts=2)
+
+    assert result["objective_summary"] == "ok"
+    assert backend.image_counts == [12, 4]
 
 
 def test_collect_evidence_image_paths_caps_and_prioritizes_images(monkeypatch) -> None:

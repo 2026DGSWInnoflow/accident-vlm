@@ -79,29 +79,50 @@ class VLMBackend(Protocol):
         ...
 
 
-def compose_with_backend(context: PipelineContext, backend: VLMBackend) -> dict[str, Any]:
+def compose_with_backend(
+    context: PipelineContext,
+    backend: VLMBackend,
+    image_limit: int | None = None,
+) -> dict[str, Any]:
     prompt = build_vlm_prompt(context)
-    image_paths = _collect_evidence_image_paths(context.evidence_package)
+    image_paths = _collect_evidence_image_paths(context.evidence_package, max_images=image_limit)
     return backend.generate_json(prompt=prompt, image_paths=image_paths)
 
 
 def compose_with_retry(
     context: PipelineContext,
     backend: VLMBackend,
-    max_attempts: int = 2,
+    max_attempts: int = 3,
 ) -> dict[str, Any]:
     if max_attempts <= 0:
         raise ValueError("max_attempts must be positive")
     last_error: Exception | None = None
+    image_limit: int | None = None
     for attempt in range(max_attempts):
         try:
-            return compose_with_backend(context, backend)
+            return compose_with_backend(context, backend, image_limit=image_limit)
         except Exception as exc:  # noqa: BLE001
             last_error = exc
             _clear_cuda_cache()
+            if _is_cuda_oom(exc):
+                image_limit = _next_oom_image_limit(image_limit)
             if attempt == max_attempts - 1:
                 break
     raise ValueError(f"VLM JSON composition failed after {max_attempts} attempts: {last_error}")
+
+
+def _is_cuda_oom(error: Exception) -> bool:
+    message = str(error).lower()
+    return "cuda out of memory" in message or ("out of memory" in message and "cuda" in message)
+
+
+def _next_oom_image_limit(current_limit: int | None) -> int:
+    retry_limit = int(os.getenv("ACCIDENT_VLM_OOM_RETRY_MAX_IMAGES", "4"))
+    if current_limit is None:
+        return max(retry_limit, 0)
+    if current_limit > 0:
+        return 0
+    return current_limit
 
 
 def _clear_cuda_cache() -> None:
@@ -114,8 +135,12 @@ def _clear_cuda_cache() -> None:
         torch.cuda.ipc_collect()
 
 
-def _collect_evidence_image_paths(evidence_package: dict[str, Any]) -> list[str]:
-    max_images = int(os.getenv("ACCIDENT_VLM_MAX_IMAGES", "12"))
+def _collect_evidence_image_paths(evidence_package: dict[str, Any], max_images: int | None = None) -> list[str]:
+    explicit_limit = max_images is not None
+    if max_images is None:
+        max_images = int(os.getenv("ACCIDENT_VLM_MAX_IMAGES", "12"))
+    elif max_images <= 0:
+        return []
 
     weighted_paths: list[tuple[int, str]] = []
     for section in ("evidence_images", "crops", "overlays", "frames"):
@@ -133,6 +158,8 @@ def _collect_evidence_image_paths(evidence_package: dict[str, Any]) -> list[str]
         if path not in image_paths:
             image_paths.append(path)
         if max_images > 0 and len(image_paths) >= max_images:
+            break
+        if explicit_limit and len(image_paths) >= max_images:
             break
     return image_paths
 
@@ -281,6 +308,7 @@ class TransformersQwenBackend:
         inputs = self._processor(text=[text], images=images or None, return_tensors="pt")
         inputs = inputs.to(self._model.device)
         max_new_tokens = int(os.getenv("ACCIDENT_VLM_MAX_NEW_TOKENS", "1024"))
+        use_cache = os.getenv("ACCIDENT_VLM_USE_CACHE", "0").lower() in {"1", "true", "yes", "on"}
         try:
             import torch  # type: ignore
 
@@ -289,14 +317,14 @@ class TransformersQwenBackend:
                     **inputs,
                     max_new_tokens=max_new_tokens,
                     do_sample=False,
-                    use_cache=True,
+                    use_cache=use_cache,
                 )
         except ImportError:
             generated_ids = self._model.generate(
                 **inputs,
                 max_new_tokens=max_new_tokens,
                 do_sample=False,
-                use_cache=True,
+                use_cache=use_cache,
             )
         return self._processor.batch_decode(
             generated_ids[:, inputs.input_ids.shape[1] :],
