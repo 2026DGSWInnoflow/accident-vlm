@@ -207,6 +207,23 @@ def test_compose_with_retry_reduces_images_after_cuda_oom(monkeypatch) -> None:
     assert backend.image_counts == [12, 4]
 
 
+def test_compose_with_retry_reduces_to_twelve_images_by_default_after_cuda_oom(monkeypatch) -> None:
+    monkeypatch.setenv("ACCIDENT_VLM_MAX_IMAGES", "20")
+    monkeypatch.delenv("ACCIDENT_VLM_OOM_RETRY_MAX_IMAGES", raising=False)
+    backend = OomThenRecordingBackend()
+    context = PipelineContext(
+        video_path="sample.mp4",
+        evidence_package={
+            "frames": [{"path": f"/tmp/frame-{index}.jpg"} for index in range(20)],
+        },
+    )
+
+    result = compose_with_retry(context, backend)
+
+    assert result["objective_summary"] == "ok"
+    assert backend.image_counts == [20, 12]
+
+
 def test_compose_with_retry_uses_compact_text_only_prompt_after_repeated_cuda_oom(monkeypatch) -> None:
     monkeypatch.setenv("ACCIDENT_VLM_MAX_IMAGES", "12")
     monkeypatch.setenv("ACCIDENT_VLM_OOM_RETRY_MAX_IMAGES", "4")
@@ -265,7 +282,7 @@ def test_collect_evidence_image_paths_uses_quality_cap_by_default(monkeypatch) -
         "frames": [{"path": f"/tmp/frame-{index}.jpg"} for index in range(80)],
     }
 
-    assert len(_collect_evidence_image_paths(evidence_package)) == 12
+    assert len(_collect_evidence_image_paths(evidence_package)) == 20
 
 
 def test_collect_evidence_image_paths_can_disable_cap(monkeypatch) -> None:

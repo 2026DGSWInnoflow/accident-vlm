@@ -131,6 +131,110 @@ def merge_selected_frames(*frame_groups: list[SelectedFrame]) -> list[SelectedFr
     return [frames_by_index[index] for index in sorted(frames_by_index)]
 
 
+def select_event_window_frames(
+    event_candidates: list[dict],
+    metadata: VideoMetadata,
+    max_frames: int = 20,
+    pre_event_window_sec: float = 6.0,
+    post_event_window_sec: float = 4.0,
+) -> list[SelectedFrame]:
+    if max_frames <= 0:
+        raise ValueError("max_frames must be positive")
+    if pre_event_window_sec < 0:
+        raise ValueError("pre_event_window_sec must be non-negative")
+    if post_event_window_sec < 0:
+        raise ValueError("post_event_window_sec must be non-negative")
+
+    center_seconds = _primary_event_seconds(event_candidates)
+    if center_seconds is None:
+        return select_regular_frames(
+            duration_sec=metadata.duration_sec,
+            fps=metadata.fps,
+            interval_sec=max(metadata.duration_sec / max(max_frames - 1, 1), 0.001),
+            max_frames=max_frames,
+        )
+
+    start = max(0.0, center_seconds - pre_event_window_sec)
+    end = min(metadata.duration_sec, center_seconds + post_event_window_sec)
+    impact_start = max(start, center_seconds - 0.75)
+    impact_end = min(end, center_seconds + 0.75)
+    pre_focus_start = max(start, center_seconds - 2.5)
+    pre_context_end = max(start, pre_focus_start)
+    post_start = min(end, impact_end)
+
+    groups = [
+        ("pre_context", start, pre_context_end, 5),
+        ("pre_impact", pre_focus_start, center_seconds, 6),
+        ("impact_candidate", impact_start, impact_end, 5),
+        ("post_impact", post_start, end, 4),
+    ]
+
+    frames: list[SelectedFrame] = []
+    for purpose, group_start, group_end, count in groups:
+        for seconds in _sample_seconds(group_start, group_end, count):
+            frame_index = _seconds_to_frame_index(seconds, metadata)
+            frames.append(
+                SelectedFrame(
+                    id=f"frame_{frame_index:06d}",
+                    time=frame_to_timecode(frame_index, metadata.fps),
+                    frame_index=frame_index,
+                    purpose=purpose,
+                )
+            )
+    merged = merge_selected_frames(frames)
+    if len(merged) < max_frames:
+        fill_frames = [
+            SelectedFrame(
+                id=f"frame_{_seconds_to_frame_index(seconds, metadata):06d}",
+                time=frame_to_timecode(_seconds_to_frame_index(seconds, metadata), metadata.fps),
+                frame_index=_seconds_to_frame_index(seconds, metadata),
+                purpose="event_window_context",
+            )
+            for seconds in _sample_seconds(start, end, max_frames)
+        ]
+        merged = merge_selected_frames(merged, fill_frames)
+    return _limit_evenly(merged, max_frames)
+
+
+def _primary_event_seconds(event_candidates: list[dict]) -> float | None:
+    for event in sorted(
+        [event for event in event_candidates if isinstance(event, dict)],
+        key=lambda item: -float(item.get("event_score", 0.0) or 0.0),
+    ):
+        try:
+            return parse_timecode(str(event.get("time", "")))
+        except ValueError:
+            continue
+    return None
+
+
+def _sample_seconds(start: float, end: float, count: int) -> list[float]:
+    if count <= 0:
+        return []
+    if end <= start or count == 1:
+        return [start]
+    step = (end - start) / (count - 1)
+    return [start + index * step for index in range(count)]
+
+
+def _seconds_to_frame_index(seconds: float, metadata: VideoMetadata) -> int:
+    if metadata.frame_count <= 0:
+        return 0
+    return max(0, min(metadata.frame_count - 1, int(round(seconds * metadata.fps))))
+
+
+def _limit_evenly(frames: list[SelectedFrame], max_frames: int) -> list[SelectedFrame]:
+    if len(frames) <= max_frames:
+        return frames
+    if max_frames == 1:
+        return [frames[0]]
+    last_index = len(frames) - 1
+    selected_indices = {
+        round(index * last_index / (max_frames - 1)) for index in range(max_frames)
+    }
+    return [frame for index, frame in enumerate(frames) if index in selected_indices]
+
+
 def build_event_segments(
     event_candidates: list[dict],
     metadata: VideoMetadata,

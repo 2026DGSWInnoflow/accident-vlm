@@ -75,17 +75,18 @@ export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export ACCIDENT_VLM_MAX_MEMORY="0:22GiB,1:22GiB,2:22GiB,3:22GiB,cpu:64GiB"
 ```
 
-By default the VLM receives the top 12 prioritized evidence images resized to a
-768px max side with a 1024-token generation cap. Generation cache is disabled
-by default to reduce GPU0 KV-cache pressure, and CUDA OOM retries automatically
-fall back to fewer images before trying compact text-only evidence. Use
-`ACCIDENT_VLM_MAX_IMAGES=0` to disable the initial cap on larger servers, or set
-a smaller value for memory-constrained servers:
+By default the VLM is tuned for a roughly five-minute API target with a
+compressed 27B-class model: preprocessing may scan higher-frame evidence, then
+the VLM receives the top 20 prioritized/event-window evidence images resized to
+a 640px max side and caps final JSON generation at 512 tokens. Generation cache
+is disabled by default to reduce GPU0 KV-cache pressure, and CUDA OOM retries
+fall back to 12 images before compact text-only evidence.
 
 ```bash
-export ACCIDENT_VLM_MAX_IMAGES=12
-export ACCIDENT_VLM_OOM_RETRY_MAX_IMAGES=4
-export ACCIDENT_VLM_IMAGE_MAX_SIDE=768
+export ACCIDENT_VLM_MAX_IMAGES=20
+export ACCIDENT_VLM_OOM_RETRY_MAX_IMAGES=12
+export ACCIDENT_VLM_IMAGE_MAX_SIDE=640
+export ACCIDENT_VLM_IMAGE_CHUNK_SIZE=0
 export ACCIDENT_VLM_CHUNK_MAX_NEW_TOKENS=192
 export ACCIDENT_VLM_FINAL_MAX_NEW_TOKENS=512
 export ACCIDENT_VLM_USE_CACHE=0

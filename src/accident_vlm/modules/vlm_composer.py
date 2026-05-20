@@ -121,9 +121,11 @@ def _is_cuda_oom(error: Exception) -> bool:
 
 
 def _next_oom_strategy(current_limit: int | None, compact_prompt: bool) -> tuple[int, bool]:
-    retry_limit = int(os.getenv("ACCIDENT_VLM_OOM_RETRY_MAX_IMAGES", "4"))
+    retry_limit = int(os.getenv("ACCIDENT_VLM_OOM_RETRY_MAX_IMAGES", "12"))
     if current_limit is None:
-        return max(retry_limit, 0), compact_prompt
+        if retry_limit <= 0:
+            return 0, True
+        return retry_limit, compact_prompt
     if current_limit > 0:
         return 0, True
     return current_limit, True
@@ -144,11 +146,11 @@ def _compact_evidence_package(evidence_package: dict[str, Any]) -> dict[str, Any
         "evidence_summary": facts.get("evidence_summary", {}),
     }
     return {
-        "frames": _compact_image_records(evidence_package.get("frames", []), 12),
+        "frames": _compact_image_records(evidence_package.get("frames", []), 20),
         "selected_segments": _limit_list(evidence_package.get("selected_segments", []), 8),
         "overlays": _compact_image_records(evidence_package.get("overlays", []), 8),
         "crops": _compact_image_records(evidence_package.get("crops", []), 8),
-        "evidence_images": _compact_image_records(evidence_package.get("evidence_images", []), 16),
+        "evidence_images": _compact_image_records(evidence_package.get("evidence_images", []), 20),
         "precomputed_facts": compact_facts,
     }
 
@@ -247,7 +249,7 @@ def _clear_cuda_cache() -> None:
 def _collect_evidence_image_paths(evidence_package: dict[str, Any], max_images: int | None = None) -> list[str]:
     explicit_limit = max_images is not None
     if max_images is None:
-        max_images = int(os.getenv("ACCIDENT_VLM_MAX_IMAGES", "12"))
+        max_images = int(os.getenv("ACCIDENT_VLM_MAX_IMAGES", "20"))
     elif max_images <= 0:
         return []
 
@@ -278,12 +280,17 @@ def _image_priority(section: str, purpose: str) -> int:
         "traffic_light_crop": 0,
         "sign_crop": 1,
         "event_segment": 2,
+        "impact_candidate": 2,
+        "pre_impact": 3,
         "actor_crop": 3,
         "track_overlay": 4,
         "tracking_overlay": 4,
+        "post_impact": 5,
         "bev_overlay": 5,
         "lane_segmentation_overlay": 6,
         "motion_keyframe": 7,
+        "event_window_context": 7,
+        "pre_context": 8,
         "regular_context": 8,
     }
     section_weights = {
@@ -371,7 +378,7 @@ class TransformersQwenBackend:
 
     def generate_json(self, prompt: str, image_paths: list[str]) -> dict[str, Any]:
         images = [self._load_image(path) for path in image_paths]
-        chunk_size = int(os.getenv("ACCIDENT_VLM_IMAGE_CHUNK_SIZE", "8"))
+        chunk_size = int(os.getenv("ACCIDENT_VLM_IMAGE_CHUNK_SIZE", "0"))
         if chunk_size > 0 and len(images) > chunk_size:
             return self._generate_chunked_json(prompt, images, chunk_size)
         return parse_json_response(self._generate_text(prompt, images, max_new_tokens=_final_max_new_tokens()))
@@ -448,7 +455,7 @@ class TransformersQwenBackend:
 
     def _load_image(self, path: str):
         image = self._image_cls.open(path).convert("RGB")
-        max_side = int(os.getenv("ACCIDENT_VLM_IMAGE_MAX_SIDE", "768"))
+        max_side = int(os.getenv("ACCIDENT_VLM_IMAGE_MAX_SIDE", "640"))
         if max_side > 0:
             image.thumbnail((max_side, max_side))
         return image

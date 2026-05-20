@@ -13,6 +13,7 @@ from accident_vlm.modules.frame_selection import (
     build_event_segments,
     extract_selected_frames,
     merge_selected_frames,
+    select_event_window_frames,
     select_motion_keyframes,
     select_regular_frames,
 )
@@ -165,6 +166,18 @@ def analyze_video_pre_vlm(
                 context.tracks,
                 run_output_dir,
             )
+        event_window_frames = select_event_window_frames(
+            context.event_candidates,
+            metadata,
+            max_frames=active_config.vlm_frame_budget,
+            pre_event_window_sec=active_config.pre_event_window_sec,
+            post_event_window_sec=active_config.post_event_window_sec,
+        )
+        context.selected_frames = extract_selected_frames(
+            video_path=video_path,
+            selected_frames=merge_selected_frames(context.selected_frames, event_window_frames),
+            output_dir=frame_output_dir,
+        )
 
     context.evidence_package = build_evidence_package(context)
     return context

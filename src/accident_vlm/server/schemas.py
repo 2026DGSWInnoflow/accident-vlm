@@ -18,6 +18,7 @@ from accident_vlm.config import (
     QUALITY_PRE_EVENT_WINDOW_SEC,
     QUALITY_REGULAR_FRAME_INTERVAL_SEC,
     QUALITY_SEGMENT_TRACKING_STRIDE_FRAMES,
+    QUALITY_VLM_FRAME_BUDGET,
 )
 
 
@@ -51,6 +52,7 @@ class AnalysisOptions(BaseModel):
     post_event_window_sec: float = Field(default=QUALITY_POST_EVENT_WINDOW_SEC, gt=0)
     segment_tracking_stride_frames: int = Field(default=QUALITY_SEGMENT_TRACKING_STRIDE_FRAMES, gt=0)
     max_segment_tracking_frames: int = Field(default=QUALITY_MAX_SEGMENT_TRACKING_FRAMES, gt=0)
+    vlm_frame_budget: int = Field(default=QUALITY_VLM_FRAME_BUDGET, gt=0)
     lane_width_m: float = Field(default=3.2, gt=0)
 
 

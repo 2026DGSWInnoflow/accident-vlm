@@ -14,6 +14,7 @@ QUALITY_MAX_MOTION_KEYFRAMES = 16
 QUALITY_MIN_MOTION_CHANGE_SCORE = 6.0
 QUALITY_SEGMENT_TRACKING_STRIDE_FRAMES = 2
 QUALITY_MAX_SEGMENT_TRACKING_FRAMES = 180
+QUALITY_VLM_FRAME_BUDGET = 20
 
 
 class PipelineConfig(BaseModel):
@@ -46,3 +47,4 @@ class PipelineConfig(BaseModel):
     min_motion_change_score: float = Field(default=QUALITY_MIN_MOTION_CHANGE_SCORE, ge=0)
     segment_tracking_stride_frames: int = Field(default=QUALITY_SEGMENT_TRACKING_STRIDE_FRAMES, gt=0)
     max_segment_tracking_frames: int = Field(default=QUALITY_MAX_SEGMENT_TRACKING_FRAMES, gt=0)
+    vlm_frame_budget: int = Field(default=QUALITY_VLM_FRAME_BUDGET, gt=0)

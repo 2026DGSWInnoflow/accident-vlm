@@ -5,6 +5,7 @@ import pytest
 from accident_vlm.modules.frame_selection import (
     build_event_segments,
     merge_selected_frames,
+    select_event_window_frames,
     select_motion_keyframes,
     select_regular_frames,
 )
@@ -143,6 +144,48 @@ def test_merge_selected_frames_sorts_and_combines_duplicate_purposes() -> None:
 
     assert [frame.frame_index for frame in merged] == [15, 30]
     assert merged[1].purpose == "regular_context+motion_keyframe"
+
+
+def test_select_event_window_frames_balances_before_impact_and_after() -> None:
+    frames = select_event_window_frames(
+        event_candidates=[
+            {"time": "00:10.000", "event_type": "접촉", "event_score": 90},
+        ],
+        metadata=VideoMetadata(
+            duration_sec=20.0,
+            fps=10,
+            resolution="640x480",
+            frame_count=200,
+            has_audio=False,
+        ),
+        max_frames=20,
+        pre_event_window_sec=6.0,
+        post_event_window_sec=4.0,
+    )
+
+    assert len(frames) == 20
+    assert frames[0].time == "00:04.000"
+    assert frames[-1].time == "00:14.000"
+    assert any("pre_impact" in frame.purpose for frame in frames)
+    assert any("impact_candidate" in frame.purpose for frame in frames)
+    assert any("post_impact" in frame.purpose for frame in frames)
+
+
+def test_select_event_window_frames_falls_back_to_regular_frames_without_event_time() -> None:
+    frames = select_event_window_frames(
+        event_candidates=[{"time": "확인불가", "event_score": 90}],
+        metadata=VideoMetadata(
+            duration_sec=9.0,
+            fps=10,
+            resolution="640x480",
+            frame_count=90,
+            has_audio=False,
+        ),
+        max_frames=5,
+    )
+
+    assert [frame.frame_index for frame in frames] == [0, 22, 45, 68, 90]
+    assert all(frame.purpose == "regular_context" for frame in frames)
 
 
 def test_build_event_segments_uses_pre_and_post_windows() -> None:

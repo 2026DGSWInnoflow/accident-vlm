@@ -25,6 +25,7 @@ def config_from_options(options: AnalysisOptions, output_dir: Path) -> PipelineC
         post_event_window_sec=options.post_event_window_sec,
         segment_tracking_stride_frames=options.segment_tracking_stride_frames,
         max_segment_tracking_frames=options.max_segment_tracking_frames,
+        vlm_frame_budget=options.vlm_frame_budget,
         lane_width_m=options.lane_width_m,
         ocr_backend=options.ocr_backend,
         object_detector_backend=options.object_detector_backend,

@@ -18,6 +18,7 @@ def test_analysis_options_defaults_to_quality_pipeline(tmp_path: Path) -> None:
     assert config.enable_segment_tracking is True
     assert config.segment_tracking_stride_frames == 2
     assert config.max_segment_tracking_frames == 180
+    assert config.vlm_frame_budget == 20
     assert config.pre_event_window_sec == 6.0
     assert config.post_event_window_sec == 4.0
 
@@ -33,6 +34,7 @@ def test_config_from_options_maps_extended_pipeline_options(tmp_path: Path) -> N
             max_motion_keyframes=12,
             segment_tracking_stride_frames=2,
             max_segment_tracking_frames=60,
+            vlm_frame_budget=24,
             motion_sample_interval_sec=0.25,
             min_motion_change_score=8.0,
             pre_event_window_sec=4.0,
@@ -48,6 +50,7 @@ def test_config_from_options_maps_extended_pipeline_options(tmp_path: Path) -> N
     assert config.max_motion_keyframes == 12
     assert config.segment_tracking_stride_frames == 2
     assert config.max_segment_tracking_frames == 60
+    assert config.vlm_frame_budget == 24
     assert config.motion_sample_interval_sec == 0.25
     assert config.min_motion_change_score == 8.0
     assert config.pre_event_window_sec == 4.0

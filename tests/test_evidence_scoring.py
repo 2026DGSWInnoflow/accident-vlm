@@ -28,6 +28,18 @@ def test_rank_evidence_images_orders_by_importance() -> None:
     assert [item["id"] for item in ranked] == ["signal", "actor", "regular"]
 
 
+def test_rank_evidence_images_keeps_impact_window_ahead_of_regular_context() -> None:
+    ranked = rank_evidence_images(
+        [
+            {"id": "regular", "purpose": "regular_context", "source": "selected_frame"},
+            {"id": "impact", "purpose": "impact_candidate", "source": "selected_frame"},
+            {"id": "pre", "purpose": "pre_impact", "source": "selected_frame"},
+        ]
+    )
+
+    assert [item["id"] for item in ranked] == ["impact", "pre", "regular"]
+
+
 def test_summarize_evidence_images_counts_sources_and_top_evidence() -> None:
     summary = summarize_evidence_images(
         [
