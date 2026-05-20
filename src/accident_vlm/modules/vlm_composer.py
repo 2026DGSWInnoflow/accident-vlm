@@ -93,14 +93,46 @@ def compose_with_retry(
 
 
 def _collect_evidence_image_paths(evidence_package: dict[str, Any]) -> list[str]:
-    image_paths: list[str] = []
-    for section in ("frames", "overlays", "crops", "evidence_images"):
+    max_images = int(os.getenv("ACCIDENT_VLM_MAX_IMAGES", "12"))
+    if max_images <= 0:
+        return []
+
+    weighted_paths: list[tuple[int, str]] = []
+    for section in ("evidence_images", "crops", "overlays", "frames"):
         for item in evidence_package.get(section, []):
-            if isinstance(item, dict) and item.get("path"):
-                path = item["path"]
-                if path not in image_paths:
-                    image_paths.append(path)
+            if not isinstance(item, dict) or not item.get("path"):
+                continue
+            purpose = str(item.get("purpose", ""))
+            weighted_paths.append((_image_priority(section, purpose), item["path"]))
+
+    image_paths: list[str] = []
+    for _, path in sorted(weighted_paths, key=lambda entry: entry[0]):
+        if path not in image_paths:
+            image_paths.append(path)
+        if len(image_paths) >= max_images:
+            break
     return image_paths
+
+
+def _image_priority(section: str, purpose: str) -> int:
+    purpose_weights = {
+        "traffic_light_crop": 0,
+        "sign_crop": 1,
+        "event_segment": 2,
+        "actor_crop": 3,
+        "track_overlay": 4,
+        "bev_overlay": 5,
+        "lane_segmentation_overlay": 6,
+        "motion_keyframe": 7,
+        "regular_context": 8,
+    }
+    section_weights = {
+        "crops": 20,
+        "overlays": 40,
+        "evidence_images": 60,
+        "frames": 80,
+    }
+    return purpose_weights.get(purpose, section_weights.get(section, 100))
 
 
 def render_qwen_chat_template(processor: Any, messages: list[dict[str, Any]]) -> str:
@@ -132,7 +164,7 @@ class TransformersQwenBackend:
         self._model.eval()
 
     def generate_json(self, prompt: str, image_paths: list[str]) -> dict[str, Any]:
-        images = [self._image_cls.open(path).convert("RGB") for path in image_paths]
+        images = [self._load_image(path) for path in image_paths]
         messages = [
             {
                 "role": "user",
@@ -145,7 +177,7 @@ class TransformersQwenBackend:
         text = render_qwen_chat_template(self._processor, messages)
         inputs = self._processor(text=[text], images=images or None, return_tensors="pt")
         inputs = inputs.to(self._model.device)
-        max_new_tokens = int(os.getenv("ACCIDENT_VLM_MAX_NEW_TOKENS", "4096"))
+        max_new_tokens = int(os.getenv("ACCIDENT_VLM_MAX_NEW_TOKENS", "2048"))
         try:
             import torch  # type: ignore
 
@@ -168,6 +200,13 @@ class TransformersQwenBackend:
             skip_special_tokens=True,
         )[0]
         return parse_json_response(generated_text)
+
+    def _load_image(self, path: str):
+        image = self._image_cls.open(path).convert("RGB")
+        max_side = int(os.getenv("ACCIDENT_VLM_IMAGE_MAX_SIDE", "768"))
+        if max_side > 0:
+            image.thumbnail((max_side, max_side))
+        return image
 
 
 def parse_json_response(text: str) -> dict[str, Any]:

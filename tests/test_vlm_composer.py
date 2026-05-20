@@ -6,6 +6,7 @@ from accident_vlm.modules.vlm_composer import (
     get_qwen_backend,
     parse_json_response,
     render_qwen_chat_template,
+    _collect_evidence_image_paths,
 )
 from accident_vlm.schemas.preprocessing import PipelineContext
 
@@ -68,7 +69,7 @@ def test_compose_with_backend_sends_prompt_and_truthy_evidence_image_paths() -> 
             ],
             "evidence_images": [
                 {"id": "lane_overlay", "path": "/tmp/lane-overlay.jpg"},
-                {"id": "signal_crop", "path": "/tmp/signal-crop.jpg"},
+                {"id": "signal_crop", "path": "/tmp/signal-crop.jpg", "purpose": "traffic_light_crop"},
             ],
             "precomputed_facts": {},
         },
@@ -80,12 +81,12 @@ def test_compose_with_backend_sends_prompt_and_truthy_evidence_image_paths() -> 
     assert result == {"schema_version": "accident_video_facts.v1"}
     assert backend.prompt == build_vlm_prompt(context)
     assert backend.image_paths == [
+        "/tmp/signal-crop.jpg",
+        "/tmp/crop-1.jpg",
+        "/tmp/overlay-1.jpg",
+        "/tmp/lane-overlay.jpg",
         "/tmp/frame-1.jpg",
         "/tmp/frame-4.jpg",
-        "/tmp/overlay-1.jpg",
-        "/tmp/crop-1.jpg",
-        "/tmp/lane-overlay.jpg",
-        "/tmp/signal-crop.jpg",
     ]
 
 
@@ -157,3 +158,22 @@ def test_compose_with_retry_retries_after_json_failure() -> None:
 
     assert backend.calls == 2
     assert result["objective_summary"] == "ok"
+
+
+def test_collect_evidence_image_paths_caps_and_prioritizes_images(monkeypatch) -> None:
+    monkeypatch.setenv("ACCIDENT_VLM_MAX_IMAGES", "3")
+    evidence_package = {
+        "frames": [{"path": "/tmp/frame.jpg", "purpose": "regular_context"}],
+        "overlays": [{"path": "/tmp/lane.jpg", "purpose": "lane_segmentation_overlay"}],
+        "crops": [{"path": "/tmp/sign.jpg", "purpose": "sign_crop"}],
+        "evidence_images": [
+            {"path": "/tmp/signal.jpg", "purpose": "traffic_light_crop"},
+            {"path": "/tmp/event.jpg", "purpose": "event_segment"},
+        ],
+    }
+
+    assert _collect_evidence_image_paths(evidence_package) == [
+        "/tmp/signal.jpg",
+        "/tmp/sign.jpg",
+        "/tmp/event.jpg",
+    ]
