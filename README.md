@@ -83,6 +83,7 @@ is disabled by default to reduce GPU0 KV-cache pressure, and CUDA OOM retries
 fall back to 12 images before compact text-only evidence.
 
 ```bash
+export ACCIDENT_VLM_QWEN_MODEL_ID="/home/minsung0830/accident-vlm/models/Qwen3.6-27B-FP8"
 export ACCIDENT_VLM_MAX_IMAGES=20
 export ACCIDENT_VLM_OOM_RETRY_MAX_IMAGES=12
 export ACCIDENT_VLM_IMAGE_MAX_SIDE=640

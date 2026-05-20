@@ -7,6 +7,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from accident_vlm.config import (
+    DEFAULT_QWEN_MODEL_ID,
     QUALITY_MAX_MOTION_KEYFRAMES,
     QUALITY_MAX_SELECTED_FRAMES,
     QUALITY_MAX_SEGMENT_TRACKING_FRAMES,
@@ -39,7 +40,7 @@ class AnalysisOptions(BaseModel):
     ocr_backend: str = "auto"
     object_detector_backend: str = QUALITY_OBJECT_DETECTOR_BACKEND
     object_detector_model: str = QUALITY_OBJECT_DETECTOR_MODEL
-    qwen_model_id: str = "/home/minsung0830/accident-vlm/models/Qwen3.6-27B"
+    qwen_model_id: str = DEFAULT_QWEN_MODEL_ID
     device: str = "auto"
     regular_frame_interval_sec: float = Field(default=QUALITY_REGULAR_FRAME_INTERVAL_SEC, gt=0)
     max_selected_frames: int = Field(default=QUALITY_MAX_SELECTED_FRAMES, gt=0)

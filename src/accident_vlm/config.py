@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 from pydantic import BaseModel, Field
@@ -15,6 +16,7 @@ QUALITY_MIN_MOTION_CHANGE_SCORE = 6.0
 QUALITY_SEGMENT_TRACKING_STRIDE_FRAMES = 2
 QUALITY_MAX_SEGMENT_TRACKING_FRAMES = 180
 QUALITY_VLM_FRAME_BUDGET = 20
+DEFAULT_QWEN_MODEL_ID = os.getenv("ACCIDENT_VLM_QWEN_MODEL_ID", "/home/minsung0830/accident-vlm/models/Qwen3.6-27B")
 
 
 class PipelineConfig(BaseModel):
@@ -39,7 +41,7 @@ class PipelineConfig(BaseModel):
     ocr_backend: str = "auto"
     object_detector_backend: str = QUALITY_OBJECT_DETECTOR_BACKEND
     object_detector_model: str = QUALITY_OBJECT_DETECTOR_MODEL
-    qwen_model_id: str = "/home/minsung0830/accident-vlm/models/Qwen3.6-27B"
+    qwen_model_id: str = DEFAULT_QWEN_MODEL_ID
     device: str = "auto"
     lane_width_m: float = Field(default=3.2, gt=0)
     motion_sample_interval_sec: float = Field(default=QUALITY_MOTION_SAMPLE_INTERVAL_SEC, gt=0)

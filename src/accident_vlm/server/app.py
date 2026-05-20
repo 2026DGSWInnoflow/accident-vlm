@@ -6,6 +6,7 @@ from pathlib import Path
 from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
 
 from accident_vlm.config import (
+    DEFAULT_QWEN_MODEL_ID,
     QUALITY_MAX_MOTION_KEYFRAMES,
     QUALITY_MAX_SELECTED_FRAMES,
     QUALITY_MAX_SEGMENT_TRACKING_FRAMES,
@@ -64,7 +65,7 @@ def create_app(job_root: Path = Path("outputs/api_jobs")) -> FastAPI:
         ocr_backend: str = Form("auto"),
         object_detector_backend: str = Form(QUALITY_OBJECT_DETECTOR_BACKEND),
         object_detector_model: str = Form(QUALITY_OBJECT_DETECTOR_MODEL),
-        qwen_model_id: str = Form("/home/minsung0830/accident-vlm/models/Qwen3.6-27B"),
+        qwen_model_id: str = Form(DEFAULT_QWEN_MODEL_ID),
         device: str = Form("auto"),
         regular_frame_interval_sec: float = Form(QUALITY_REGULAR_FRAME_INTERVAL_SEC),
         max_selected_frames: int = Form(QUALITY_MAX_SELECTED_FRAMES),
