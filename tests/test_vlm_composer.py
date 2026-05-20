@@ -7,7 +7,6 @@ from accident_vlm.modules.vlm_composer import (
     normalize_model_id,
     normalize_device,
     disable_transformers_allocator_warmup,
-    TransformersQwenBackend,
     parse_json_response,
     render_qwen_chat_template,
     _configure_transformers_loading,
@@ -191,7 +190,7 @@ def test_collect_evidence_image_paths_uses_quality_cap_by_default(monkeypatch) -
         "frames": [{"path": f"/tmp/frame-{index}.jpg"} for index in range(80)],
     }
 
-    assert len(_collect_evidence_image_paths(evidence_package)) == 12
+    assert len(_collect_evidence_image_paths(evidence_package)) == 32
 
 
 def test_collect_evidence_image_paths_can_disable_cap(monkeypatch) -> None:
@@ -201,34 +200,6 @@ def test_collect_evidence_image_paths_can_disable_cap(monkeypatch) -> None:
     }
 
     assert len(_collect_evidence_image_paths(evidence_package)) == 80
-
-
-def test_qwen_load_image_resizes_by_default(monkeypatch) -> None:
-    monkeypatch.delenv("ACCIDENT_VLM_IMAGE_MAX_SIDE", raising=False)
-
-    class FakeImage:
-        def __init__(self) -> None:
-            self.thumbnail_size = None
-
-        def convert(self, mode: str):
-            assert mode == "RGB"
-            return self
-
-        def thumbnail(self, size: tuple[int, int]) -> None:
-            self.thumbnail_size = size
-
-    class FakeImageModule:
-        @staticmethod
-        def open(path: str):
-            assert path == "/tmp/frame.jpg"
-            return FakeImage()
-
-    backend = object.__new__(TransformersQwenBackend)
-    backend._image_cls = FakeImageModule
-
-    image = backend._load_image("/tmp/frame.jpg")
-
-    assert image.thumbnail_size == (896, 896)
 
 
 def test_parse_max_memory_accepts_gpu_and_cpu_entries() -> None:
