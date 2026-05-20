@@ -4,17 +4,27 @@ This project extracts objective accident facts. The numbers below are planning
 estimates, not benchmark claims. They should be replaced by `accident-vlm
 evaluate-dataset` results once enough labeled videos have been processed.
 
-## Current Quality Target
+## Current Quality Target: High-Precision Mode
 
-For 100 mixed dashcam accident videos with visible road context:
+The default target is now high precision: facts that remain in the final JSON
+should be correct at an estimated 90%+ rate. This is achieved by lowering recall:
+ambiguous facts are explicitly downgraded to `확인불가` instead of being guessed.
 
-- Broad scene / actor presence: 70-85 usable outputs
-- Accident type hint: 65-80 usable outputs
-- Actor timeline: 60-75 usable outputs
-- Traffic light / sign facts: 50-70 usable outputs
-- OCR speed / datetime / GPS: 45-65 usable outputs when overlay text is present
-- Collision candidate timing: 55-70 usable outputs
-- RAG-ready objective JSON: 65-80 usable outputs
+For 100 mixed dashcam accident videos with visible road context, expected
+precision of retained facts:
+
+- Broad scene / actor presence retained facts: 90-94%
+- Accident type retained hints: 90-93%
+- Actor timeline retained events: 90-92%
+- Traffic light / sign retained facts: 90-92%
+- OCR speed / datetime / GPS retained facts: 90-94% when overlay text is present
+- Collision retained facts: 90-92%
+- RAG-ready objective JSON precision: 90-93%
+
+Expected recall is lower:
+
+- RAG-ready JSON with enough concrete facts: 55-70 out of 100
+- Conservative JSON with many `확인불가` fields: 30-45 out of 100
 
 ## Main Failure Modes
 
@@ -33,3 +43,6 @@ For 100 mixed dashcam accident videos with visible road context:
 - OCR speed summaries reject implausible temporal jumps.
 - VLM output is verified against preprocessing evidence before schema validation.
 - Dataset evaluation estimates usable/high-quality counts per 100 labeled videos.
+- High-precision gate downgrades low-confidence timeline, actor movement, traffic
+  signal, speed, collision, and RAG accident type hints unless they have strong
+  preprocessing evidence.
