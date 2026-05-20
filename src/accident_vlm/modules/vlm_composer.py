@@ -235,6 +235,39 @@ class TransformersQwenBackend:
 
     def generate_json(self, prompt: str, image_paths: list[str]) -> dict[str, Any]:
         images = [self._load_image(path) for path in image_paths]
+        chunk_size = int(os.getenv("ACCIDENT_VLM_IMAGE_CHUNK_SIZE", "8"))
+        if chunk_size > 0 and len(images) > chunk_size:
+            return self._generate_chunked_json(prompt, images, chunk_size)
+        return parse_json_response(self._generate_text(prompt, images))
+
+    def _generate_chunked_json(self, prompt: str, images: list[Any], chunk_size: int) -> dict[str, Any]:
+        chunk_summaries: list[dict[str, Any]] = []
+        total_chunks = (len(images) + chunk_size - 1) // chunk_size
+        for chunk_index, start in enumerate(range(0, len(images), chunk_size), start=1):
+            chunk_images = images[start : start + chunk_size]
+            chunk_prompt = (
+                "Analyze only this evidence image chunk. Do not decide fault or legal liability. "
+                "Return concise Korean observations grounded only in visible evidence.\n"
+                f"Chunk {chunk_index}/{total_chunks}; image indexes {start + 1}-{start + len(chunk_images)}.\n\n"
+                f"Original task:\n{prompt}"
+            )
+            chunk_summaries.append(
+                {
+                    "chunk_index": chunk_index,
+                    "image_indexes": list(range(start + 1, start + len(chunk_images) + 1)),
+                    "observations": self._generate_text(chunk_prompt, chunk_images),
+                }
+            )
+
+        final_prompt = (
+            f"{prompt}\n\n"
+            "The evidence images were analyzed in chunks to fit the model context. "
+            "Use all chunk observations below as evidence and return the final JSON only.\n"
+            f"{json.dumps(chunk_summaries, ensure_ascii=False, indent=2)}"
+        )
+        return parse_json_response(self._generate_text(final_prompt, []))
+
+    def _generate_text(self, prompt: str, images: list[Any]) -> str:
         messages = [
             {
                 "role": "user",
@@ -265,11 +298,10 @@ class TransformersQwenBackend:
                 do_sample=False,
                 use_cache=True,
             )
-        generated_text = self._processor.batch_decode(
+        return self._processor.batch_decode(
             generated_ids[:, inputs.input_ids.shape[1] :],
             skip_special_tokens=True,
         )[0]
-        return parse_json_response(generated_text)
 
     def _load_image(self, path: str):
         image = self._image_cls.open(path).convert("RGB")

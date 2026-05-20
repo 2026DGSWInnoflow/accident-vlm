@@ -7,6 +7,7 @@ from accident_vlm.modules.vlm_composer import (
     normalize_model_id,
     normalize_device,
     disable_transformers_allocator_warmup,
+    TransformersQwenBackend,
     parse_json_response,
     render_qwen_chat_template,
     _configure_transformers_loading,
@@ -200,6 +201,33 @@ def test_collect_evidence_image_paths_can_disable_cap(monkeypatch) -> None:
     }
 
     assert len(_collect_evidence_image_paths(evidence_package)) == 80
+
+
+def test_qwen_generate_json_chunks_images_without_dropping_evidence(monkeypatch) -> None:
+    monkeypatch.setenv("ACCIDENT_VLM_IMAGE_CHUNK_SIZE", "2")
+    backend = object.__new__(TransformersQwenBackend)
+    backend._load_image = lambda path: f"image:{path}"
+    calls = []
+
+    def fake_generate_text(prompt: str, images):
+        calls.append((prompt, list(images or [])))
+        if images:
+            return f"chunk saw {len(images)} images"
+        return '{"schema_version":"accident_video_facts.v1","objective_summary":"ok"}'
+
+    backend._generate_text = fake_generate_text
+
+    result = backend.generate_json("full prompt", ["a.jpg", "b.jpg", "c.jpg", "d.jpg", "e.jpg"])
+
+    assert result["schema_version"] == "accident_video_facts.v1"
+    assert [images for _, images in calls] == [
+        ["image:a.jpg", "image:b.jpg"],
+        ["image:c.jpg", "image:d.jpg"],
+        ["image:e.jpg"],
+        [],
+    ]
+    assert "chunk saw 2 images" in calls[-1][0]
+    assert "full prompt" in calls[-1][0]
 
 
 def test_parse_max_memory_accepts_gpu_and_cpu_entries() -> None:
