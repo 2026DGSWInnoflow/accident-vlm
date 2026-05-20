@@ -32,7 +32,9 @@ def analyze_input_quality(video_path: Path, selected_frames: list[SelectedFrame]
     brightness_scores: list[float] = []
     noise_scores: list[float] = []
     motion_scores: list[float] = []
+    motion_observations: list[dict] = []
     previous_gray: np.ndarray | None = None
+    previous_frame: SelectedFrame | None = None
 
     for frame in selected_frames[:30]:
         capture.set(cv2.CAP_PROP_POS_FRAMES, frame.frame_index)
@@ -56,8 +58,20 @@ def analyze_input_quality(video_path: Path, selected_frames: list[SelectedFrame]
                 1.2,
                 0,
             )
-            motion_scores.append(float(np.linalg.norm(flow, axis=2).mean()))
+            motion_score = float(np.linalg.norm(flow, axis=2).mean())
+            motion_scores.append(motion_score)
+            motion_observations.append(
+                {
+                    "value": motion_score,
+                    "time": frame.time,
+                    "evidence": [
+                        previous_frame.id if previous_frame else frame.id,
+                        frame.id,
+                    ],
+                }
+            )
         previous_gray = gray
+        previous_frame = frame
     capture.release()
 
     if not blur_scores:
@@ -74,6 +88,11 @@ def analyze_input_quality(video_path: Path, selected_frames: list[SelectedFrame]
     brightness_mean = float(np.mean(brightness_scores))
     noise_mean = float(np.mean(noise_scores))
     motion_mean = float(np.mean(motion_scores)) if motion_scores else 0.0
+    peak_motion = (
+        max(motion_observations, key=lambda observation: observation["value"])
+        if motion_observations
+        else {"value": 0.0, "time": "확인불가", "evidence": []}
+    )
 
     blur = _bucket(blur_mean, 80.0, 300.0, ("high", "medium", "low"))
     brightness = _bucket(brightness_mean, 65.0, 205.0, ("dark", "normal", "overexposed"))
@@ -87,6 +106,12 @@ def analyze_input_quality(video_path: Path, selected_frames: list[SelectedFrame]
         brightness=brightness,
         night_noise=night_noise,
         camera_shake=camera_shake,
+        camera_shake_score={
+            "value": round(float(peak_motion["value"]), 3),
+            "time": peak_motion["time"],
+            "evidence": peak_motion["evidence"],
+            "method": "farneback_optical_flow_peak",
+        },
         occlusion="unknown",
         analysis_reliability=reliability,
     )

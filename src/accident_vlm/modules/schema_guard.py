@@ -86,6 +86,10 @@ def repair_and_constrain_payload(payload: dict) -> dict:
             signal["status"] = "unknown"
             signal["confidence"] = "unknown"
             _append_uncertainty(repaired, "근거 없는 값이 확인불가로 조정됨: traffic_control.signal")
+    _require_speed_evidence(repaired)
+    _require_collision_evidence(repaired)
+    _require_timeline_evidence(repaired)
+    _require_actor_evidence(repaired)
     return repaired
 
 
@@ -115,6 +119,67 @@ def _require_evidence_for_field(payload: dict, key: str) -> None:
 def _append_uncertainty(payload: dict, message: str) -> None:
     if message not in payload["uncertainties"]:
         payload["uncertainties"].append(message)
+
+
+def _has_evidence(value: dict) -> bool:
+    return bool(value.get("evidence") or value.get("source") or value.get("crops"))
+
+
+def _require_speed_evidence(payload: dict) -> None:
+    estimates = payload.get("speed_and_distance", {}).get("speed_estimates", [])
+    if not isinstance(estimates, list):
+        return
+    for index, estimate in enumerate(estimates):
+        if not isinstance(estimate, dict) or estimate.get("numeric_kmh") is None:
+            continue
+        if _has_evidence(estimate):
+            continue
+        estimate["value"] = "모름"
+        estimate["numeric_kmh"] = None
+        estimate["range_kmh"] = None
+        estimate["confidence"] = "unknown"
+        _append_uncertainty(
+            payload,
+            f"근거 없는 값이 확인불가로 조정됨: speed_and_distance.speed_estimates[{index}]",
+        )
+
+
+def _require_collision_evidence(payload: dict) -> None:
+    collision = payload.get("collision")
+    if not isinstance(collision, dict) or not collision:
+        return
+    if _has_evidence(collision):
+        return
+    for key in ("impact_type", "impact_location", "damage_or_injury"):
+        if key in collision:
+            collision[key] = "확인불가"
+    collision["confidence"] = "unknown"
+    _append_uncertainty(payload, "근거 없는 값이 확인불가로 조정됨: collision")
+
+
+def _require_timeline_evidence(payload: dict) -> None:
+    timeline = payload.get("timeline", [])
+    if not isinstance(timeline, list):
+        return
+    for index, event in enumerate(timeline):
+        if not isinstance(event, dict) or _has_evidence(event):
+            continue
+        event["event"] = "근거 부족으로 세부 사건 확인불가"
+        event["confidence"] = "unknown"
+        _append_uncertainty(payload, f"근거 없는 값이 확인불가로 조정됨: timeline[{index}]")
+
+
+def _require_actor_evidence(payload: dict) -> None:
+    actors = payload.get("actors", [])
+    if not isinstance(actors, list):
+        return
+    for index, actor in enumerate(actors):
+        if not isinstance(actor, dict):
+            continue
+        if actor.get("movement") not in {None, "확인불가"} and not _has_evidence(actor):
+            actor["movement"] = "확인불가"
+            actor["confidence"] = "unknown"
+            _append_uncertainty(payload, f"근거 없는 값이 확인불가로 조정됨: actors[{index}].movement")
 
 
 def _matched_spans(text: str) -> list[tuple[int, int, str]]:

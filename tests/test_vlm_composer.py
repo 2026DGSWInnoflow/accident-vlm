@@ -66,6 +66,10 @@ def test_compose_with_backend_sends_prompt_and_truthy_evidence_image_paths() -> 
                 {"id": "c001", "path": "/tmp/crop-1.jpg"},
                 {"id": "c002", "path": ""},
             ],
+            "evidence_images": [
+                {"id": "lane_overlay", "path": "/tmp/lane-overlay.jpg"},
+                {"id": "signal_crop", "path": "/tmp/signal-crop.jpg"},
+            ],
             "precomputed_facts": {},
         },
     )
@@ -80,6 +84,8 @@ def test_compose_with_backend_sends_prompt_and_truthy_evidence_image_paths() -> 
         "/tmp/frame-4.jpg",
         "/tmp/overlay-1.jpg",
         "/tmp/crop-1.jpg",
+        "/tmp/lane-overlay.jpg",
+        "/tmp/signal-crop.jpg",
     ]
 
 

@@ -22,8 +22,10 @@ def analyze_road_geometry(
     lane_markings: set[str] = set()
     evidence: list[str] = []
     overlays: list[dict] = []
+    bev_overlays: list[dict] = []
     lane_width_pixels: list[float] = []
     vanishing_points: list[dict] = []
+    homography_matrices: list[list[list[float]]] = []
 
     if output_dir:
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -104,6 +106,16 @@ def analyze_road_geometry(
                         "purpose": "lane_segmentation_overlay",
                     }
                 )
+                homography_record = _build_bev_overlay(
+                    image=image,
+                    frame_id=frame.id,
+                    lane_positions=unique_positions,
+                    vanishing_point=vp,
+                    output_dir=output_dir,
+                )
+                if homography_record:
+                    bev_overlays.append(homography_record["overlay"])
+                    homography_matrices.append(homography_record["matrix"])
 
     if lane_counts:
         visible_lane_count = int(round(float(np.median(lane_counts))))
@@ -115,6 +127,7 @@ def analyze_road_geometry(
     pixels_per_meter = None
     if lane_width_pixels:
         pixels_per_meter = round(float(np.median(lane_width_pixels)) / lane_width_m, 3)
+    matrix = _median_matrix(homography_matrices)
 
     return {
         "visible_lane_count": {
@@ -134,6 +147,12 @@ def analyze_road_geometry(
             "overlays": overlays,
             "confidence": confidence,
         },
+        "bev": {
+            "available": bool(bev_overlays),
+            "method": "lane_trapezoid_warp",
+            "overlays": bev_overlays,
+            "confidence": confidence if bev_overlays else "unknown",
+        },
         "homography": {
             "available": bool(lane_counts),
             "method": "lane_boundary_hough_estimate" if lane_counts else "not_available",
@@ -141,6 +160,55 @@ def analyze_road_geometry(
             "confidence": confidence,
             "pixels_per_meter": pixels_per_meter,
             "vanishing_point": _median_point(vanishing_points),
+            "matrix": matrix,
+        },
+    }
+
+
+def _build_bev_overlay(
+    image: np.ndarray,
+    frame_id: str,
+    lane_positions: list[float],
+    vanishing_point: dict | None,
+    output_dir: Path,
+) -> dict | None:
+    if len(lane_positions) < 2 or not vanishing_point:
+        return None
+    height, width = image.shape[:2]
+    left_bottom = float(lane_positions[0])
+    right_bottom = float(lane_positions[-1])
+    lane_width = max(20.0, right_bottom - left_bottom)
+    top_y = max(0.0, min(float(height) * 0.65, float(vanishing_point["y"]) + height * 0.08))
+    top_half = max(10.0, lane_width * 0.18)
+    top_center = max(0.0, min(float(width), float(vanishing_point["x"])))
+    src = np.float32(
+        [
+            [max(0.0, top_center - top_half), top_y],
+            [min(float(width - 1), top_center + top_half), top_y],
+            [min(float(width - 1), right_bottom), float(height - 1)],
+            [max(0.0, left_bottom), float(height - 1)],
+        ]
+    )
+    dst = np.float32(
+        [
+            [width * 0.35, 0],
+            [width * 0.65, 0],
+            [width * 0.65, height - 1],
+            [width * 0.35, height - 1],
+        ]
+    )
+    matrix = cv2.getPerspectiveTransform(src, dst)
+    warped = cv2.warpPerspective(image, matrix, (width, height))
+    bev_path = output_dir / f"{frame_id}_bev_overlay.jpg"
+    cv2.imwrite(str(bev_path), warped)
+    return {
+        "matrix": [[round(float(value), 6) for value in row] for row in matrix.tolist()],
+        "overlay": {
+            "id": f"overlay_{frame_id}_bev",
+            "path": str(bev_path),
+            "frame_id": frame_id,
+            "purpose": "bev_overlay",
+            "source_points": src.tolist(),
         },
     }
 
@@ -191,3 +259,10 @@ def _median_point(points: list[tuple[float, float]] | list[dict]) -> dict | None
         "x": round(float(np.median([point[0] for point in points])), 3),
         "y": round(float(np.median([point[1] for point in points])), 3),
     }
+
+
+def _median_matrix(matrices: list[list[list[float]]]) -> list[list[float]] | None:
+    if not matrices:
+        return None
+    array = np.array(matrices, dtype=float)
+    return [[round(float(value), 6) for value in row] for row in np.median(array, axis=0)]

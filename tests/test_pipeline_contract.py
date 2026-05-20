@@ -52,7 +52,32 @@ def test_build_evidence_package_is_snapshot_of_mutable_context_fields() -> None:
             has_audio=False,
         ),
         tracks=[{"id": "vehicle_1", "positions": [{"frame_index": 0, "x": 10}]}],
-        road_geometry={"lanes": [{"id": "lane_1", "direction": "forward"}]},
+        ocr_observations=[
+            {
+                "frame_id": "frame_000001",
+                "roi_name": "bottom_band",
+                "image_path": "/tmp/ocr_roi.jpg",
+            }
+        ],
+        road_geometry={
+            "lanes": [{"id": "lane_1", "direction": "forward"}],
+            "lane_segmentation": {
+                "overlays": [
+                    {
+                        "id": "lane_overlay_1",
+                        "path": "/tmp/lane_overlay.jpg",
+                        "mask_path": "/tmp/lane_mask.jpg",
+                    }
+                ]
+            },
+        },
+        traffic_control={
+            "signal": {
+                "crops": [{"id": "signal_crop_1", "path": "/tmp/signal_crop.jpg"}]
+            }
+        },
+        overlays=[{"id": "tracking_overlay_1", "path": "/tmp/tracking.jpg"}],
+        crops=[{"id": "actor_crop_1", "path": "/tmp/actor.jpg"}],
         selected_segments=[{"id": "seg_event_001", "start": "00:00.000", "end": "00:02.000"}],
     )
 
@@ -66,6 +91,14 @@ def test_build_evidence_package_is_snapshot_of_mutable_context_fields() -> None:
     assert precomputed_facts["tracks"][0]["positions"][0]["x"] == 10
     assert precomputed_facts["road_geometry"]["lanes"][0]["direction"] == "forward"
     assert evidence_package["selected_segments"][0]["end"] == "00:02.000"
+    assert [image["path"] for image in evidence_package["evidence_images"]] == [
+        "/tmp/tracking.jpg",
+        "/tmp/actor.jpg",
+        "/tmp/ocr_roi.jpg",
+        "/tmp/lane_overlay.jpg",
+        "/tmp/lane_mask.jpg",
+        "/tmp/signal_crop.jpg",
+    ]
 
 
 def test_analyze_video_pre_vlm_merges_motion_keyframes_before_extraction(

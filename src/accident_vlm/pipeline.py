@@ -1,7 +1,11 @@
 from pathlib import Path
 
 from accident_vlm.config import PipelineConfig
-from accident_vlm.modules.actor_tracking import create_object_detector, detect_and_track_actors
+from accident_vlm.modules.actor_tracking import (
+    create_object_detector,
+    detect_and_track_actors,
+    detect_and_track_segments,
+)
 from accident_vlm.modules.evidence_builder import build_evidence_package
 from accident_vlm.modules.evidence_visuals import build_visual_evidence
 from accident_vlm.modules.event_detection import detect_event_candidates
@@ -139,6 +143,26 @@ def analyze_video_pre_vlm(
             active_config.pre_event_window_sec,
             active_config.post_event_window_sec,
         )
+        if (
+            active_config.enable_actor_tracking
+            and active_config.enable_segment_tracking
+            and context.selected_segments
+        ):
+            segment_tracks = detect_and_track_segments(
+                video_path=video_path,
+                selected_segments=context.selected_segments,
+                fps=metadata.fps,
+                detector=detector,
+                output_dir=run_output_dir / "segment_tracking_frames",
+                stride_frames=active_config.segment_tracking_stride_frames,
+                max_frames_per_segment=active_config.max_segment_tracking_frames,
+            )
+            context.tracks = [*context.tracks, *segment_tracks]
+            context.overlays, context.crops = build_visual_evidence(
+                context.selected_frames,
+                context.tracks,
+                run_output_dir,
+            )
 
     context.evidence_package = build_evidence_package(context)
     return context

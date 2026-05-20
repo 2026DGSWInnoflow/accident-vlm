@@ -1,6 +1,11 @@
 from pathlib import Path
 
-from accident_vlm.modules.actor_tracking import Detection, UltralyticsTracker, detect_and_track_actors
+from accident_vlm.modules.actor_tracking import (
+    Detection,
+    UltralyticsTracker,
+    detect_and_track_actors,
+    detect_and_track_segments,
+)
 from accident_vlm.schemas.preprocessing import SelectedFrame
 
 
@@ -86,3 +91,40 @@ def test_detect_and_track_actors_prefers_detector_track_ids(monkeypatch) -> None
     assert tracks[0]["track_id"] == "T42"
     assert tracks[0]["tracking_method"] == "detector_track_id"
     assert len(tracks[0]["positions"]) == 2
+
+
+def test_detect_and_track_segments_extracts_dense_segment_frames(monkeypatch, tmp_path) -> None:
+    calls = {}
+
+    def fake_extract(video_path, selected_frames, output_dir):
+        calls["indices"] = [frame.frame_index for frame in selected_frames]
+        return [
+            frame.model_copy(update={"path": str(tmp_path / f"{frame.id}.jpg")})
+            for frame in selected_frames
+        ]
+
+    monkeypatch.setattr("accident_vlm.modules.actor_tracking.extract_selected_frames", fake_extract)
+    monkeypatch.setattr(
+        "accident_vlm.modules.actor_tracking._read_frame_shape",
+        lambda path: (100, 200),
+    )
+
+    tracks = detect_and_track_segments(
+        video_path=Path("/tmp/video.mp4"),
+        selected_segments=[
+            {
+                "id": "seg_event_001",
+                "start": "00:01.000",
+                "end": "00:01.300",
+            }
+        ],
+        fps=10,
+        detector=FakeDetector(),
+        output_dir=tmp_path / "segments",
+        stride_frames=1,
+        max_frames_per_segment=4,
+    )
+
+    assert calls["indices"] == [10, 11, 12, 13]
+    assert tracks[0]["source_stage"] == "segment_tracking"
+    assert len(tracks[0]["positions"]) == 4

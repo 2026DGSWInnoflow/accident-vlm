@@ -311,7 +311,12 @@ def _summarize_speed_values(values: list[tuple[float, str, float]]) -> dict:
             "source": "ocr_overlay",
             "evidence": [],
         }
-    speeds = [value for value, _, _ in values]
+    candidates = [
+        {"frame_id": frame_id, "value": value, "confidence": confidence}
+        for value, frame_id, confidence in values
+    ]
+    filtered_values, rejected_outliers = _filter_speed_outliers(values)
+    speeds = [value for value, _, _ in filtered_values]
     selected = float(median(speeds))
     spread = max(speeds) - min(speeds)
     confidence = "high" if len(values) >= 3 and spread <= 3 else "medium" if spread <= 8 else "low"
@@ -322,9 +327,33 @@ def _summarize_speed_values(values: list[tuple[float, str, float]]) -> dict:
         "status": "observed",
         "confidence": confidence,
         "source": "ocr_overlay",
-        "evidence": [frame_id for _, frame_id, _ in values],
-        "sample_count": len(values),
+        "evidence": [frame_id for _, frame_id, _ in filtered_values],
+        "sample_count": len(filtered_values),
+        "candidates": candidates,
+        "rejected_outliers": rejected_outliers,
     }
+
+
+def _filter_speed_outliers(
+    values: list[tuple[float, str, float]],
+) -> tuple[list[tuple[float, str, float]], list[dict]]:
+    plausible = [item for item in values if 0 <= item[0] <= 180]
+    rejected = [
+        {"frame_id": frame_id, "value": value}
+        for value, frame_id, _ in values
+        if value < 0 or value > 180
+    ]
+    if len(plausible) < 3:
+        return plausible or values, rejected
+    speed_median = float(median([value for value, _, _ in plausible]))
+    filtered = []
+    for item in plausible:
+        value, frame_id, _ = item
+        if abs(value - speed_median) <= 35:
+            filtered.append(item)
+        else:
+            rejected.append({"frame_id": frame_id, "value": value})
+    return filtered or plausible, rejected
 
 
 def _summarize_gps_values(values: list[tuple[dict, str, float]]) -> dict:

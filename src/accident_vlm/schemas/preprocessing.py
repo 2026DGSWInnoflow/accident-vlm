@@ -22,6 +22,7 @@ class InputQuality(BaseModel):
     brightness: str
     night_noise: str
     camera_shake: str
+    camera_shake_score: dict = Field(default_factory=dict)
     occlusion: str
     analysis_reliability: str
 
@@ -58,4 +59,5 @@ class PipelineContext(BaseModel):
     event_candidates: list[dict] = Field(default_factory=list)
     overlays: list[dict] = Field(default_factory=list)
     crops: list[dict] = Field(default_factory=list)
+    evidence_images: list[dict] = Field(default_factory=list)
     evidence_package: dict = Field(default_factory=dict)

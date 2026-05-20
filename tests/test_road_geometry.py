@@ -30,5 +30,8 @@ def test_analyze_road_geometry_outputs_lane_overlay_mask_and_bev_scale(tmp_path)
     assert result["lane_segmentation"]["method"] == "canny_hough_lane_mask"
     assert result["lane_segmentation"]["overlays"]
     assert result["homography"]["available"] is True
+    assert result["homography"]["matrix"] is not None
     assert result["homography"]["pixels_per_meter"] is not None
+    assert result["bev"]["overlays"]
+    assert cv2.imread(result["bev"]["overlays"][0]["path"]) is not None
     assert cv2.imread(result["lane_segmentation"]["overlays"][0]["path"]) is not None

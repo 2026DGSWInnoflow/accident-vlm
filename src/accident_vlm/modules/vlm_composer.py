@@ -94,10 +94,12 @@ def compose_with_retry(
 
 def _collect_evidence_image_paths(evidence_package: dict[str, Any]) -> list[str]:
     image_paths: list[str] = []
-    for section in ("frames", "overlays", "crops"):
+    for section in ("frames", "overlays", "crops", "evidence_images"):
         for item in evidence_package.get(section, []):
             if isinstance(item, dict) and item.get("path"):
-                image_paths.append(item["path"])
+                path = item["path"]
+                if path not in image_paths:
+                    image_paths.append(path)
     return image_paths
 
 

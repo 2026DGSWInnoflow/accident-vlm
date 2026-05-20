@@ -122,3 +122,22 @@ def test_summarize_ocr_observations_returns_unknowns_when_no_parsed_values() -> 
     assert summary["speed"]["numeric_kmh"] is None
     assert summary["gps"]["value"] is None
     assert summary["observation_count"] == 1
+
+
+def test_summarize_ocr_observations_removes_speed_outliers_and_records_candidates() -> None:
+    summary = summarize_ocr_observations(
+        [
+            {"frame_id": "f1", "confidence": 0.9, "parsed": {"speed_kmh": 48.0}},
+            {"frame_id": "f2", "confidence": 0.9, "parsed": {"speed_kmh": 49.0}},
+            {"frame_id": "f3", "confidence": 0.9, "parsed": {"speed_kmh": 240.0}},
+        ]
+    )
+
+    assert summary["speed"]["numeric_kmh"] == 48.5
+    assert summary["speed"]["range_kmh"] == [48.0, 49.0]
+    assert summary["speed"]["rejected_outliers"] == [{"frame_id": "f3", "value": 240.0}]
+    assert summary["speed"]["candidates"] == [
+        {"frame_id": "f1", "value": 48.0, "confidence": 0.9},
+        {"frame_id": "f2", "value": 49.0, "confidence": 0.9},
+        {"frame_id": "f3", "value": 240.0, "confidence": 0.9},
+    ]

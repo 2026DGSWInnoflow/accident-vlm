@@ -13,6 +13,7 @@ class PipelineConfig(BaseModel):
     enable_motion_keyframes: bool = True
     enable_scene_analysis: bool = True
     enable_actor_tracking: bool = True
+    enable_segment_tracking: bool = True
     enable_road_geometry: bool = True
     enable_speed_distance: bool = True
     enable_traffic_control: bool = True
@@ -30,3 +31,5 @@ class PipelineConfig(BaseModel):
     motion_sample_interval_sec: float = Field(default=0.5, gt=0)
     max_motion_keyframes: int = Field(default=8, gt=0)
     min_motion_change_score: float = Field(default=12.0, ge=0)
+    segment_tracking_stride_frames: int = Field(default=3, gt=0)
+    max_segment_tracking_frames: int = Field(default=90, gt=0)

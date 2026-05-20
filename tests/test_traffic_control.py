@@ -39,3 +39,32 @@ def test_analyze_traffic_control_creates_signal_crop_and_speed_limit_sign(tmp_pa
     assert cv2.imread(result["signal"]["crops"][0]["path"]) is not None
     assert result["signs"][0]["value"] == "제한속도 30"
     assert result["signs"][0]["evidence"] == ["frame_000001"]
+
+
+def test_analyze_traffic_control_votes_signs_and_saves_failure_cases(tmp_path) -> None:
+    frame_path = tmp_path / "no_signal.jpg"
+    image = np.zeros((120, 200, 3), dtype=np.uint8)
+    cv2.imwrite(str(frame_path), image)
+
+    result = analyze_traffic_control(
+        [
+            SelectedFrame(
+                id="frame_000010",
+                time="00:00.333",
+                frame_index=10,
+                purpose="regular_context",
+                path=str(frame_path),
+            )
+        ],
+        [
+            {"frame_id": "frame_000010", "text": "제한속도 50", "confidence": 0.70, "source": "ocr"},
+            {"frame_id": "frame_000011", "text": "속도제한 50", "confidence": 0.80, "source": "ocr"},
+            {"frame_id": "frame_000012", "text": "제한속도 30", "confidence": 0.55, "source": "ocr"},
+        ],
+        output_dir=tmp_path / "traffic",
+    )
+
+    assert result["sign_votes"][0]["value"] == "제한속도 50"
+    assert result["sign_votes"][0]["vote_count"] == 2
+    assert result["failure_cases"][0]["reason"] == "traffic_light_not_detected"
+    assert cv2.imread(result["failure_cases"][0]["path"]) is not None

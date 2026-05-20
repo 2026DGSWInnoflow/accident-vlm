@@ -7,7 +7,9 @@ from typing import Protocol
 
 import cv2
 
+from accident_vlm.modules.frame_selection import extract_selected_frames
 from accident_vlm.schemas.preprocessing import SelectedFrame
+from accident_vlm.utils.timecode import frame_to_timecode, parse_timecode
 
 
 SUPPORTED_ACTOR_LABELS = {
@@ -241,4 +243,45 @@ def detect_and_track_actors(
             track["relative_position_start"] = "확인불가"
             track["relative_position_end"] = "확인불가"
             track["movement_candidate"] = "확인불가"
+    return tracks
+
+
+def detect_and_track_segments(
+    video_path: Path,
+    selected_segments: list[dict],
+    fps: float,
+    detector: ObjectDetector,
+    output_dir: Path,
+    stride_frames: int = 3,
+    max_frames_per_segment: int = 90,
+) -> list[dict]:
+    if fps <= 0:
+        raise ValueError("fps must be positive")
+    if stride_frames <= 0:
+        raise ValueError("stride_frames must be positive")
+    if max_frames_per_segment <= 0:
+        raise ValueError("max_frames_per_segment must be positive")
+
+    segment_frames: list[SelectedFrame] = []
+    for segment in selected_segments:
+        try:
+            start_frame = int(round(parse_timecode(str(segment.get("start"))) * fps))
+            end_frame = int(round(parse_timecode(str(segment.get("end"))) * fps))
+        except ValueError:
+            continue
+        frame_indices = list(range(start_frame, max(start_frame, end_frame) + 1, stride_frames))
+        for frame_index in frame_indices[:max_frames_per_segment]:
+            segment_frames.append(
+                SelectedFrame(
+                    id=f"{segment.get('id', 'seg')}_frame_{frame_index:06d}",
+                    time=frame_to_timecode(frame_index, fps),
+                    frame_index=frame_index,
+                    purpose="segment_tracking",
+                )
+            )
+
+    extracted = extract_selected_frames(video_path, segment_frames, output_dir)
+    tracks = detect_and_track_actors(extracted, detector)
+    for track in tracks:
+        track["source_stage"] = "segment_tracking"
     return tracks

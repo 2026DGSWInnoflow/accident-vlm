@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from collections import Counter
 from pathlib import Path
 
 import cv2
@@ -33,8 +34,10 @@ def analyze_traffic_control(
 ) -> dict:
     signal_votes: list[tuple[str, float, str, dict | None]] = []
     signal_crops: list[dict] = []
+    failure_cases: list[dict] = []
     if output_dir:
         output_dir.mkdir(parents=True, exist_ok=True)
+        (output_dir / "failure_cases").mkdir(parents=True, exist_ok=True)
 
     for frame in selected_frames[:20]:
         if not frame.path:
@@ -93,6 +96,23 @@ def analyze_traffic_control(
             "evidence": [],
             "crops": signal_crops,
         }
+        if output_dir and selected_frames:
+            first_frame = next((frame for frame in selected_frames if frame.path), None)
+            if first_frame:
+                image = cv2.imread(first_frame.path)
+                if image is not None:
+                    height = image.shape[0]
+                    failure_path = output_dir / "failure_cases" / f"{first_frame.id}_traffic_light_not_detected.jpg"
+                    cv2.imwrite(str(failure_path), image[: int(height * 0.45), :])
+                    failure_cases.append(
+                        {
+                            "id": f"failure_{first_frame.id}_traffic_light",
+                            "path": str(failure_path),
+                            "frame_id": first_frame.id,
+                            "reason": "traffic_light_not_detected",
+                            "purpose": "failure_case",
+                        }
+                    )
 
     signs = []
     for observation in ocr_observations:
@@ -120,11 +140,42 @@ def analyze_traffic_control(
                 }
             )
 
+    sign_votes = _vote_signs(signs)
     return {
         "signal": signal,
         "signs": signs,
+        "sign_votes": sign_votes,
+        "failure_cases": failure_cases,
         "crosswalk": {"visible": False, "confidence": "unknown", "method": "not_implemented"},
     }
+
+
+def _vote_signs(signs: list[dict]) -> list[dict]:
+    counter = Counter(sign["value"] for sign in signs)
+    voted: list[dict] = []
+    for value, count in counter.most_common():
+        evidence = [
+            evidence_id
+            for sign in signs
+            if sign["value"] == value
+            for evidence_id in sign.get("evidence", [])
+            if evidence_id
+        ]
+        confidences = [
+            float(sign.get("confidence") or 0.0)
+            for sign in signs
+            if sign["value"] == value
+        ]
+        voted.append(
+            {
+                "value": value,
+                "vote_count": count,
+                "confidence": "high" if count >= 3 else "medium" if count >= 2 else "low",
+                "mean_ocr_confidence": round(float(np.mean(confidences)), 3) if confidences else 0.0,
+                "evidence": evidence,
+            }
+        )
+    return voted
 
 
 def _detect_signal_candidates(image: np.ndarray) -> list[dict]:

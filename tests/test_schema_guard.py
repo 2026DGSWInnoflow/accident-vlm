@@ -114,3 +114,51 @@ def test_repair_and_constrain_payload_fills_required_fields_and_unknowns_unsuppo
     assert repaired["scene_type"]["status"] == "unknown"
     assert repaired["traffic_control"]["signal"]["value"] == "확인불가"
     assert "근거 없는 값이 확인불가로 조정됨: scene_type" in repaired["uncertainties"]
+
+
+def test_repair_and_constrain_payload_requires_evidence_for_speed_collision_and_timeline():
+    payload = _minimal_final_output_payload("객관 사실 요약")
+    payload["speed_and_distance"] = {
+        "speed_estimates": [
+            {
+                "actor_id": "ego_vehicle",
+                "value": "47km/h",
+                "numeric_kmh": 47,
+                "method": "ocr_overlay",
+                "confidence": "high",
+                "evidence": [],
+            }
+        ]
+    }
+    payload["collision"] = {
+        "impact_type": "측면충돌",
+        "confidence": "medium",
+        "evidence": [],
+    }
+    payload["timeline"] = [
+        {
+            "time": "00:06.000",
+            "event": "T1과 T2가 접촉함",
+            "confidence": "medium",
+            "evidence": [],
+        }
+    ]
+    payload["actors"] = [
+        {
+            "id": "T1",
+            "type": "승용차",
+            "movement": "차로변경",
+            "evidence": [],
+        }
+    ]
+
+    repaired = repair_and_constrain_payload(payload)
+
+    assert repaired["speed_and_distance"]["speed_estimates"][0]["value"] == "모름"
+    assert repaired["speed_and_distance"]["speed_estimates"][0]["numeric_kmh"] is None
+    assert repaired["collision"]["impact_type"] == "확인불가"
+    assert repaired["timeline"][0]["event"] == "근거 부족으로 세부 사건 확인불가"
+    assert repaired["actors"][0]["movement"] == "확인불가"
+    assert "근거 없는 값이 확인불가로 조정됨: speed_and_distance.speed_estimates[0]" in repaired[
+        "uncertainties"
+    ]

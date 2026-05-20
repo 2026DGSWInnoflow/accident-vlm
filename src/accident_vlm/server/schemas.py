@@ -28,6 +28,16 @@ class AnalysisOptions(BaseModel):
     device: str = "auto"
     regular_frame_interval_sec: float = Field(default=1.0, gt=0)
     max_selected_frames: int = Field(default=16, gt=0)
+    enable_motion_keyframes: bool = True
+    enable_segment_tracking: bool = True
+    max_motion_keyframes: int = Field(default=8, gt=0)
+    motion_sample_interval_sec: float = Field(default=0.5, gt=0)
+    min_motion_change_score: float = Field(default=12.0, ge=0)
+    pre_event_window_sec: float = Field(default=5.0, gt=0)
+    post_event_window_sec: float = Field(default=3.0, gt=0)
+    segment_tracking_stride_frames: int = Field(default=3, gt=0)
+    max_segment_tracking_frames: int = Field(default=90, gt=0)
+    lane_width_m: float = Field(default=3.2, gt=0)
 
 
 class PathAnalysisRequest(BaseModel):
