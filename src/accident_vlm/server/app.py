@@ -5,6 +5,19 @@ from pathlib import Path
 
 from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
 
+from accident_vlm.config import (
+    QUALITY_MAX_MOTION_KEYFRAMES,
+    QUALITY_MAX_SELECTED_FRAMES,
+    QUALITY_MAX_SEGMENT_TRACKING_FRAMES,
+    QUALITY_MIN_MOTION_CHANGE_SCORE,
+    QUALITY_MOTION_SAMPLE_INTERVAL_SEC,
+    QUALITY_OBJECT_DETECTOR_BACKEND,
+    QUALITY_OBJECT_DETECTOR_MODEL,
+    QUALITY_POST_EVENT_WINDOW_SEC,
+    QUALITY_PRE_EVENT_WINDOW_SEC,
+    QUALITY_REGULAR_FRAME_INTERVAL_SEC,
+    QUALITY_SEGMENT_TRACKING_STRIDE_FRAMES,
+)
 from accident_vlm.server.job_store import JobStore
 from accident_vlm.server.runner import run_analysis_job
 from accident_vlm.server.schemas import (
@@ -48,21 +61,21 @@ def create_app(job_root: Path = Path("outputs/api_jobs")) -> FastAPI:
         file: UploadFile = File(...),
         mode: AnalysisMode = Form(AnalysisMode.PRE_VLM),
         ocr_backend: str = Form("auto"),
-        object_detector_backend: str = Form("none"),
-        object_detector_model: str = Form("yolov8x.pt"),
+        object_detector_backend: str = Form(QUALITY_OBJECT_DETECTOR_BACKEND),
+        object_detector_model: str = Form(QUALITY_OBJECT_DETECTOR_MODEL),
         qwen_model_id: str = Form("/home/minsung0830/accident-vlm/models/Qwen3.6-27B"),
         device: str = Form("auto"),
-        regular_frame_interval_sec: float = Form(1.0),
-        max_selected_frames: int = Form(16),
+        regular_frame_interval_sec: float = Form(QUALITY_REGULAR_FRAME_INTERVAL_SEC),
+        max_selected_frames: int = Form(QUALITY_MAX_SELECTED_FRAMES),
         enable_motion_keyframes: bool = Form(True),
         enable_segment_tracking: bool = Form(True),
-        max_motion_keyframes: int = Form(8),
-        motion_sample_interval_sec: float = Form(0.5),
-        min_motion_change_score: float = Form(12.0),
-        pre_event_window_sec: float = Form(5.0),
-        post_event_window_sec: float = Form(3.0),
-        segment_tracking_stride_frames: int = Form(3),
-        max_segment_tracking_frames: int = Form(90),
+        max_motion_keyframes: int = Form(QUALITY_MAX_MOTION_KEYFRAMES),
+        motion_sample_interval_sec: float = Form(QUALITY_MOTION_SAMPLE_INTERVAL_SEC),
+        min_motion_change_score: float = Form(QUALITY_MIN_MOTION_CHANGE_SCORE),
+        pre_event_window_sec: float = Form(QUALITY_PRE_EVENT_WINDOW_SEC),
+        post_event_window_sec: float = Form(QUALITY_POST_EVENT_WINDOW_SEC),
+        segment_tracking_stride_frames: int = Form(QUALITY_SEGMENT_TRACKING_STRIDE_FRAMES),
+        max_segment_tracking_frames: int = Form(QUALITY_MAX_SEGMENT_TRACKING_FRAMES),
         lane_width_m: float = Form(3.2),
     ) -> JobCreatedResponse:
         options = AnalysisOptions(

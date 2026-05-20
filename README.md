@@ -47,6 +47,25 @@ accident-vlm analyze-full input.mp4 \
 The final JSON is still evidence constrained: unsupported facts must remain
 `확인불가`, and legal judgment terms are sanitized before output.
 
+The default pipeline is quality-first. A request that does not override options
+uses OCR, YOLOv8x + ByteTrack, denser regular frames, motion keyframes, segment
+tracking, road geometry/BEV, traffic control detection, and VLM composition.
+Current quality defaults:
+
+```text
+regular_frame_interval_sec=0.5
+max_selected_frames=32
+max_motion_keyframes=16
+motion_sample_interval_sec=0.25
+min_motion_change_score=6.0
+pre_event_window_sec=6.0
+post_event_window_sec=4.0
+segment_tracking_stride_frames=2
+max_segment_tracking_frames=180
+object_detector_backend=bytetrack
+object_detector_model=yolov8x.pt
+```
+
 For multi-GPU Qwen serving, make sure every GPU is visible to the API process.
 For example, on a 4 x 24GB server:
 
@@ -56,8 +75,10 @@ export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export ACCIDENT_VLM_MAX_MEMORY="0:22GiB,1:22GiB,2:22GiB,3:22GiB,cpu:64GiB"
 ```
 
-By default the VLM receives all evidence images at original resolution. If the
-server is memory constrained, these optional guards can be set:
+By default the VLM receives the top 64 prioritized evidence images at original
+resolution. This keeps signal-heavy evidence first while avoiding OCR/crop noise
+from drowning the prompt. Use `ACCIDENT_VLM_MAX_IMAGES=0` to disable the cap, or
+set a smaller value for memory-constrained servers:
 
 ```bash
 export ACCIDENT_VLM_MAX_IMAGES=24

@@ -114,7 +114,7 @@ def _clear_cuda_cache() -> None:
 
 
 def _collect_evidence_image_paths(evidence_package: dict[str, Any]) -> list[str]:
-    max_images = int(os.getenv("ACCIDENT_VLM_MAX_IMAGES", "0"))
+    max_images = int(os.getenv("ACCIDENT_VLM_MAX_IMAGES", "64"))
 
     weighted_paths: list[tuple[int, str]] = []
     for section in ("evidence_images", "crops", "overlays", "frames"):
@@ -140,6 +140,7 @@ def _image_priority(section: str, purpose: str) -> int:
         "event_segment": 2,
         "actor_crop": 3,
         "track_overlay": 4,
+        "tracking_overlay": 4,
         "bev_overlay": 5,
         "lane_segmentation_overlay": 6,
         "motion_keyframe": 7,

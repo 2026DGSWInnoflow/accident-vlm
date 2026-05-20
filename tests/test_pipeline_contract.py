@@ -19,9 +19,9 @@ def test_build_pre_vlm_context_contains_regular_frames() -> None:
 
     assert context.video_path == "sample.mp4"
     assert context.video_metadata is not None
-    assert [frame.frame_index for frame in context.selected_frames] == [0, 30]
+    assert [frame.frame_index for frame in context.selected_frames] == [0, 15, 30, 45]
     assert all(frame.frame_index < context.video_metadata.frame_count for frame in context.selected_frames)
-    assert len(context.selected_frames) == 2
+    assert len(context.selected_frames) == 4
     assert context.evidence_package["precomputed_facts"]["metadata"]["fps"] == 30
 
 

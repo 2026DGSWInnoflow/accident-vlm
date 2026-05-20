@@ -3,7 +3,6 @@ from accident_vlm.modules.vlm_composer import (
     build_vlm_prompt,
     compose_with_backend,
     compose_with_retry,
-    _clear_cuda_cache,
     get_qwen_backend,
     normalize_model_id,
     normalize_device,
@@ -185,13 +184,22 @@ def test_collect_evidence_image_paths_caps_and_prioritizes_images(monkeypatch) -
     ]
 
 
-def test_collect_evidence_image_paths_does_not_cap_by_default(monkeypatch) -> None:
+def test_collect_evidence_image_paths_uses_quality_cap_by_default(monkeypatch) -> None:
     monkeypatch.delenv("ACCIDENT_VLM_MAX_IMAGES", raising=False)
     evidence_package = {
-        "frames": [{"path": f"/tmp/frame-{index}.jpg"} for index in range(20)],
+        "frames": [{"path": f"/tmp/frame-{index}.jpg"} for index in range(80)],
     }
 
-    assert len(_collect_evidence_image_paths(evidence_package)) == 20
+    assert len(_collect_evidence_image_paths(evidence_package)) == 64
+
+
+def test_collect_evidence_image_paths_can_disable_cap(monkeypatch) -> None:
+    monkeypatch.setenv("ACCIDENT_VLM_MAX_IMAGES", "0")
+    evidence_package = {
+        "frames": [{"path": f"/tmp/frame-{index}.jpg"} for index in range(80)],
+    }
+
+    assert len(_collect_evidence_image_paths(evidence_package)) == 80
 
 
 def test_parse_max_memory_accepts_gpu_and_cpu_entries() -> None:
@@ -313,4 +321,3 @@ def test_disable_transformers_allocator_warmup_patches_and_restores(monkeypatch)
 
     module.caching_allocator_warmup()
     assert calls == ["original"]
-

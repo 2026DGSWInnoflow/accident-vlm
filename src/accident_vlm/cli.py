@@ -6,7 +6,7 @@ import typer
 from rich import print
 
 from accident_vlm import __version__
-from accident_vlm.config import PipelineConfig
+from accident_vlm.config import PipelineConfig, QUALITY_OBJECT_DETECTOR_BACKEND
 from accident_vlm.modules.vlm_composer import compose_final_facts, create_qwen_backend, write_final_facts
 from accident_vlm.pipeline import analyze_video_pre_vlm
 
@@ -47,7 +47,7 @@ def analyze(
     object_detector_backend: Annotated[
         str,
         typer.Option("--detector", help="Object detector/tracker: none, ultralytics, bytetrack, botsort."),
-    ] = "none",
+    ] = QUALITY_OBJECT_DETECTOR_BACKEND,
     object_detector_model: Annotated[
         str,
         typer.Option("--detector-model", help="Detector model name/path for server execution."),
@@ -85,7 +85,7 @@ def analyze_full(
         typer.Option("--final-output", help="Path for final accident fact JSON."),
     ] = Path("outputs/accident_facts.json"),
     ocr_backend: Annotated[str, typer.Option("--ocr-backend")] = "auto",
-    object_detector_backend: Annotated[str, typer.Option("--detector")] = "none",
+    object_detector_backend: Annotated[str, typer.Option("--detector")] = QUALITY_OBJECT_DETECTOR_BACKEND,
     object_detector_model: Annotated[str, typer.Option("--detector-model")] = "yolov8x.pt",
     qwen_model_id: Annotated[str, typer.Option("--qwen-model")] = "Qwen/Qwen3.6-27B",
     device: Annotated[str, typer.Option("--device")] = "auto",
