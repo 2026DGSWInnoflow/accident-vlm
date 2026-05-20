@@ -190,7 +190,7 @@ def test_collect_evidence_image_paths_uses_quality_cap_by_default(monkeypatch) -
         "frames": [{"path": f"/tmp/frame-{index}.jpg"} for index in range(80)],
     }
 
-    assert len(_collect_evidence_image_paths(evidence_package)) == 32
+    assert len(_collect_evidence_image_paths(evidence_package)) == 12
 
 
 def test_collect_evidence_image_paths_can_disable_cap(monkeypatch) -> None:

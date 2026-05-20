@@ -75,15 +75,16 @@ export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export ACCIDENT_VLM_MAX_MEMORY="0:22GiB,1:22GiB,2:22GiB,3:22GiB,cpu:64GiB"
 ```
 
-By default the VLM receives the top 32 prioritized evidence images resized to a
-1024px max side. This keeps signal-heavy evidence first while leaving enough
-GPU memory for Qwen generation. Use `ACCIDENT_VLM_MAX_IMAGES=0` to disable the
-cap on larger servers, or set a smaller value for memory-constrained servers:
+By default the VLM receives the top 12 prioritized evidence images resized to a
+768px max side with a 1024-token generation cap. This keeps signal-heavy
+evidence first while leaving enough GPU memory for Qwen generation. Use
+`ACCIDENT_VLM_MAX_IMAGES=0` to disable the cap on larger servers, or set a
+smaller value for memory-constrained servers:
 
 ```bash
-export ACCIDENT_VLM_MAX_IMAGES=24
-export ACCIDENT_VLM_IMAGE_MAX_SIDE=1024
-export ACCIDENT_VLM_MAX_NEW_TOKENS=2048
+export ACCIDENT_VLM_MAX_IMAGES=12
+export ACCIDENT_VLM_IMAGE_MAX_SIDE=768
+export ACCIDENT_VLM_MAX_NEW_TOKENS=1024
 ```
 
 ## API Server

@@ -115,7 +115,7 @@ def _clear_cuda_cache() -> None:
 
 
 def _collect_evidence_image_paths(evidence_package: dict[str, Any]) -> list[str]:
-    max_images = int(os.getenv("ACCIDENT_VLM_MAX_IMAGES", "32"))
+    max_images = int(os.getenv("ACCIDENT_VLM_MAX_IMAGES", "12"))
 
     weighted_paths: list[tuple[int, str]] = []
     for section in ("evidence_images", "crops", "overlays", "frames"):
@@ -247,7 +247,7 @@ class TransformersQwenBackend:
         text = render_qwen_chat_template(self._processor, messages)
         inputs = self._processor(text=[text], images=images or None, return_tensors="pt")
         inputs = inputs.to(self._model.device)
-        max_new_tokens = int(os.getenv("ACCIDENT_VLM_MAX_NEW_TOKENS", "2048"))
+        max_new_tokens = int(os.getenv("ACCIDENT_VLM_MAX_NEW_TOKENS", "1024"))
         try:
             import torch  # type: ignore
 
@@ -273,7 +273,7 @@ class TransformersQwenBackend:
 
     def _load_image(self, path: str):
         image = self._image_cls.open(path).convert("RGB")
-        max_side = int(os.getenv("ACCIDENT_VLM_IMAGE_MAX_SIDE", "1024"))
+        max_side = int(os.getenv("ACCIDENT_VLM_IMAGE_MAX_SIDE", "768"))
         if max_side > 0:
             image.thumbnail((max_side, max_side))
         return image
