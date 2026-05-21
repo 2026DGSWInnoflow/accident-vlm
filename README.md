@@ -101,6 +101,21 @@ extra, or at minimum:
 pip install compressed-tensors
 ```
 
+Some AWQ/compressed-tensors checkpoints are not generation-compatible with
+direct Transformers loading and fail with `weight_packed` during generation.
+For those models, serve the AWQ model through an OpenAI-compatible vLLM/SGLang
+endpoint and point the API at that local endpoint:
+
+```bash
+export ACCIDENT_VLM_BACKEND=openai
+export ACCIDENT_VLM_OPENAI_BASE_URL="http://127.0.0.1:8001/v1"
+export ACCIDENT_VLM_OPENAI_TIMEOUT_SEC=300
+export ACCIDENT_VLM_QWEN_MODEL_ID="/home/minsung0830/accident-vlm/models/Qwen3.6-27B-AWQ-INT4"
+```
+
+If you want to keep the built-in Transformers backend, use a
+Transformers-compatible checkpoint such as FP8 or a BF16-MTP AWQ variant.
+
 ## API Server
 
 Run the API server:

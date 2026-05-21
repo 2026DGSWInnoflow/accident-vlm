@@ -1,3 +1,5 @@
+import json
+
 from accident_vlm.modules.vlm_composer import (
     SYSTEM_PROMPT,
     build_vlm_prompt,
@@ -7,11 +9,15 @@ from accident_vlm.modules.vlm_composer import (
     normalize_model_id,
     normalize_device,
     disable_transformers_allocator_warmup,
+    OpenAICompatibleVLMBackend,
     TransformersQwenBackend,
     parse_json_response,
     render_qwen_chat_template,
     _configure_transformers_loading,
     _collect_evidence_image_paths,
+    _format_non_retriable_vlm_error,
+    _image_data_url,
+    _is_retriable_vlm_error,
     _model_dtype,
     _parse_max_memory,
 )
@@ -62,6 +68,15 @@ class OomUntilCompactBackend:
         if len(self.image_counts) < 3:
             raise RuntimeError("CUDA out of memory. Tried to allocate 13.37 GiB.")
         return {"schema_version": "accident_video_facts.v1", "objective_summary": "compact ok"}
+
+
+class WeightPackedBackend:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def generate_json(self, prompt: str, image_paths: list[str]) -> dict:
+        self.calls += 1
+        raise KeyError("weight_packed")
 
 
 def test_build_vlm_prompt_includes_system_prompt_schema_and_evidence_package() -> None:
@@ -258,6 +273,38 @@ def test_compose_with_retry_uses_compact_text_only_prompt_after_repeated_cuda_oo
     assert "x" * 200 not in backend.prompts[-1]
 
 
+def test_compose_with_retry_does_not_retry_non_retriable_weight_packed_error() -> None:
+    backend = WeightPackedBackend()
+
+    try:
+        compose_with_retry(
+            PipelineContext(video_path="sample.mp4", evidence_package={"frames": []}),
+            backend,
+            max_attempts=3,
+        )
+    except RuntimeError as exc:
+        assert "ACCIDENT_VLM_BACKEND=openai" in str(exc)
+    else:
+        raise AssertionError("expected non-retryable AWQ backend error")
+
+    assert backend.calls == 1
+
+
+def test_non_retriable_weight_packed_error_has_actionable_message() -> None:
+    message = _format_non_retriable_vlm_error(KeyError("weight_packed"))
+
+    assert "AWQ/compressed-tensors" in message
+    assert "vLLM/SGLang" in message
+    assert "Transformers-compatible checkpoint" in message
+
+
+def test_retriable_vlm_error_only_retries_oom_and_json_errors() -> None:
+    assert _is_retriable_vlm_error(RuntimeError("CUDA out of memory. Tried to allocate 1 GiB."))
+    assert _is_retriable_vlm_error(ValueError("bad json"))
+    assert _is_retriable_vlm_error(json.JSONDecodeError("bad", "{}", 0))
+    assert not _is_retriable_vlm_error(KeyError("weight_packed"))
+
+
 def test_collect_evidence_image_paths_caps_and_prioritizes_images(monkeypatch) -> None:
     monkeypatch.setenv("ACCIDENT_VLM_MAX_IMAGES", "3")
     evidence_package = {
@@ -323,6 +370,85 @@ def test_qwen_generate_json_chunks_images_without_dropping_evidence(monkeypatch)
     assert [tokens for _, _, tokens in calls] == [128, 128, 128, 512]
     assert "chunk saw 2 images" in calls[-1][0]
     assert "full prompt" in calls[-1][0]
+
+
+def test_image_data_url_encodes_local_image(tmp_path) -> None:
+    image_path = tmp_path / "sample.jpg"
+    image_path.write_bytes(b"abc")
+
+    assert _image_data_url(str(image_path)) == "data:image/jpeg;base64,YWJj"
+
+
+def test_openai_compatible_backend_posts_chat_completion(monkeypatch, tmp_path) -> None:
+    image_path = tmp_path / "sample.jpg"
+    image_path.write_bytes(b"abc")
+    captured = {}
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": (
+                                    '{"schema_version":"accident_video_facts.v1",'
+                                    '"objective_summary":"ok"}'
+                                )
+                            }
+                        }
+                    ]
+                }
+            ).encode("utf-8")
+
+    def fake_urlopen(request, timeout):
+        captured["url"] = request.full_url
+        captured["timeout"] = timeout
+        captured["payload"] = json.loads(request.data.decode("utf-8"))
+        captured["headers"] = dict(request.header_items())
+        return FakeResponse()
+
+    monkeypatch.setattr("accident_vlm.modules.vlm_composer.urllib.request.urlopen", fake_urlopen)
+
+    backend = OpenAICompatibleVLMBackend(
+        model_id="qwen-awq",
+        base_url="http://localhost:30000/v1/",
+        api_key="secret",
+        timeout_sec=123,
+    )
+
+    result = backend.generate_json("prompt", [str(image_path)])
+
+    assert result["objective_summary"] == "ok"
+    assert captured["url"] == "http://localhost:30000/v1/chat/completions"
+    assert captured["timeout"] == 123
+    assert captured["payload"]["model"] == "qwen-awq"
+    assert captured["payload"]["temperature"] == 0
+    assert captured["payload"]["messages"][0]["content"][0] == {"type": "text", "text": "prompt"}
+    assert captured["payload"]["messages"][0]["content"][1]["image_url"]["url"] == "data:image/jpeg;base64,YWJj"
+    assert captured["headers"]["Authorization"] == "Bearer secret"
+
+
+def test_get_qwen_backend_can_use_openai_compatible_backend(monkeypatch) -> None:
+    monkeypatch.setenv("ACCIDENT_VLM_BACKEND", "openai")
+    monkeypatch.setenv("ACCIDENT_VLM_OPENAI_BASE_URL", "http://localhost:8001/v1")
+    monkeypatch.setenv("ACCIDENT_VLM_OPENAI_API_KEY", "secret")
+    monkeypatch.setenv("ACCIDENT_VLM_OPENAI_TIMEOUT_SEC", "77")
+    get_qwen_backend.cache_clear()
+
+    backend = get_qwen_backend("served-model", "cuda:0")
+
+    assert isinstance(backend, OpenAICompatibleVLMBackend)
+    assert backend.model_id == "served-model"
+    assert backend.base_url == "http://localhost:8001/v1"
+    assert backend.api_key == "secret"
+    assert backend.timeout_sec == 77
 
 
 def test_parse_max_memory_accepts_gpu_and_cpu_entries() -> None:

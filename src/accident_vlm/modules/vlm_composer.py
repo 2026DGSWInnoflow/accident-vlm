@@ -1,6 +1,9 @@
 import ast
+import base64
 import json
+import mimetypes
 import os
+import urllib.request
 from contextlib import contextmanager
 from functools import lru_cache
 from pathlib import Path
@@ -108,6 +111,8 @@ def compose_with_retry(
         except Exception as exc:  # noqa: BLE001
             last_error = exc
             _clear_cuda_cache()
+            if not _is_retriable_vlm_error(exc):
+                raise RuntimeError(_format_non_retriable_vlm_error(exc)) from exc
             if _is_cuda_oom(exc):
                 image_limit, compact_prompt = _next_oom_strategy(image_limit, compact_prompt)
             if attempt == max_attempts - 1:
@@ -118,6 +123,30 @@ def compose_with_retry(
 def _is_cuda_oom(error: Exception) -> bool:
     message = str(error).lower()
     return "cuda out of memory" in message or ("out of memory" in message and "cuda" in message)
+
+
+def _is_retriable_vlm_error(error: Exception) -> bool:
+    if _is_cuda_oom(error):
+        return True
+    if isinstance(error, (json.JSONDecodeError, SyntaxError)):
+        return True
+    if isinstance(error, ValueError):
+        message = str(error).lower()
+        return "vlm response" in message or "json" in message
+    return False
+
+
+def _format_non_retriable_vlm_error(error: Exception) -> str:
+    message = str(error)
+    if "weight_packed" in message:
+        return (
+            "AWQ/compressed-tensors checkpoint failed during Transformers generation "
+            "with weight_packed tensors. This is not a retryable VLM output error. "
+            "Serve this AWQ model through vLLM/SGLang and set ACCIDENT_VLM_BACKEND=openai, "
+            "or use a Transformers-compatible checkpoint such as an FP8 model or a BF16-MTP "
+            f"AWQ variant. Original error: {message}"
+        )
+    return f"Non-retryable VLM backend error: {message}"
 
 
 def _next_oom_strategy(current_limit: int | None, compact_prompt: bool) -> tuple[int, bool]:
@@ -461,6 +490,60 @@ class TransformersQwenBackend:
         return image
 
 
+class OpenAICompatibleVLMBackend:
+    def __init__(
+        self,
+        model_id: str,
+        base_url: str,
+        api_key: str | None = None,
+        timeout_sec: float = 300.0,
+    ) -> None:
+        self.model_id = model_id
+        self.base_url = base_url.rstrip("/")
+        self.api_key = api_key
+        self.timeout_sec = timeout_sec
+
+    def generate_json(self, prompt: str, image_paths: list[str]) -> dict[str, Any]:
+        content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
+        for path in image_paths:
+            content.append(
+                {
+                    "type": "image_url",
+                    "image_url": {"url": _image_data_url(path)},
+                }
+            )
+        payload = {
+            "model": self.model_id,
+            "messages": [{"role": "user", "content": content}],
+            "temperature": 0,
+            "max_tokens": _final_max_new_tokens(),
+        }
+        request = urllib.request.Request(
+            f"{self.base_url}/chat/completions",
+            data=json.dumps(payload).encode("utf-8"),
+            headers=_openai_headers(self.api_key),
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=self.timeout_sec) as response:  # noqa: S310
+            body = json.loads(response.read().decode("utf-8"))
+        text = body["choices"][0]["message"]["content"]
+        return parse_json_response(text)
+
+
+def _openai_headers(api_key: str | None) -> dict[str, str]:
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    return headers
+
+
+def _image_data_url(path: str) -> str:
+    mime_type = mimetypes.guess_type(path)[0] or "image/jpeg"
+    data = Path(path).read_bytes()
+    encoded = base64.b64encode(data).decode("ascii")
+    return f"data:{mime_type};base64,{encoded}"
+
+
 def _parse_max_memory(raw_value: str | None) -> dict[Any, str]:
     if not raw_value:
         return {}
@@ -516,6 +599,11 @@ _parse_json_response = parse_json_response
 
 @lru_cache(maxsize=1)
 def _get_qwen_backend(normalized_model_id: str, normalized_device: str = "auto") -> VLMBackend:
+    if os.getenv("ACCIDENT_VLM_BACKEND", "transformers").lower() in {"openai", "openai-compatible", "sglang", "vllm"}:
+        base_url = os.getenv("ACCIDENT_VLM_OPENAI_BASE_URL", "http://127.0.0.1:8001/v1")
+        api_key = os.getenv("ACCIDENT_VLM_OPENAI_API_KEY")
+        timeout_sec = float(os.getenv("ACCIDENT_VLM_OPENAI_TIMEOUT_SEC", "300"))
+        return OpenAICompatibleVLMBackend(normalized_model_id, base_url, api_key, timeout_sec)
     return TransformersQwenBackend(normalized_model_id, device=normalized_device)
 
 
