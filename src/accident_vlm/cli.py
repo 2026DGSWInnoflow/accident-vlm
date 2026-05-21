@@ -167,6 +167,14 @@ def benchmark_api(
     qwen_model_id: Annotated[str, typer.Option("--qwen-model")] = DEFAULT_QWEN_MODEL_ID,
     object_detector_backend: Annotated[str, typer.Option("--detector")] = QUALITY_OBJECT_DETECTOR_BACKEND,
     object_detector_model: Annotated[str, typer.Option("--detector-model")] = "yolov8x.pt",
+    verify_tls: Annotated[
+        bool,
+        typer.Option("--verify-tls/--no-verify-tls", help="Verify HTTPS certificates."),
+    ] = True,
+    verbose: Annotated[
+        bool,
+        typer.Option("--verbose/--quiet", help="Print per-video benchmark progress."),
+    ] = True,
 ) -> None:
     report = run_api_benchmark(
         BenchmarkOptions(
@@ -180,6 +188,8 @@ def benchmark_api(
             qwen_model_id=qwen_model_id,
             object_detector_backend=object_detector_backend,
             object_detector_model=object_detector_model,
+            verify_tls=verify_tls,
+            verbose=verbose,
         )
     )
     print(f"API benchmark written to {output_path}")

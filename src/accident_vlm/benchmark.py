@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import mimetypes
+import ssl
 import time
 import uuid
 import urllib.error
@@ -32,6 +33,8 @@ class BenchmarkOptions:
     object_detector_model: str = "yolov8x.pt"
     qwen_model_id: str = "/home/minsung0830/accident-vlm/models/Qwen3.6-27B-AWQ-INT4"
     device: str = "auto"
+    verify_tls: bool = True
+    verbose: bool = False
 
 
 def discover_videos(video_root: Path, sample_limit: int = 0) -> list[Path]:
@@ -48,10 +51,18 @@ def run_api_benchmark(options: BenchmarkOptions) -> dict[str, Any]:
     started_at = _utc_timestamp()
 
     for index, video_path in enumerate(videos, start=1):
+        if options.verbose:
+            print(f"[{index}/{len(videos)}] start {video_path.name}", flush=True)
         item = run_single_api_benchmark_item(video_path, options, labels.get(video_path.stem))
         item["sample_index"] = index
         item["sample_count"] = len(videos)
         items.append(item)
+        if options.verbose:
+            print(
+                f"[{index}/{len(videos)}] {item.get('status')} "
+                f"{video_path.name} elapsed={item.get('elapsed_sec')}s",
+                flush=True,
+            )
 
     report = {
         "schema_version": "accident_vlm.api_benchmark.v1",
@@ -68,6 +79,8 @@ def run_api_benchmark(options: BenchmarkOptions) -> dict[str, Any]:
             "object_detector_model": options.object_detector_model,
             "qwen_model_id": options.qwen_model_id,
             "device": options.device,
+            "verify_tls": options.verify_tls,
+            "verbose": options.verbose,
         },
         "summary": summarize_benchmark_items(items),
         "items": items,
@@ -94,7 +107,13 @@ def run_single_api_benchmark_item(
         created = submit_upload_job(video_path, options)
         job_id = created["job_id"]
         item["job_id"] = job_id
-        record = wait_for_job(options.api_base_url, job_id, options.poll_interval_sec, options.job_timeout_sec)
+        record = wait_for_job(
+            options.api_base_url,
+            job_id,
+            options.poll_interval_sec,
+            options.job_timeout_sec,
+            verify_tls=options.verify_tls,
+        )
         elapsed_sec = round(time.monotonic() - start, 3)
         item.update(
             {
@@ -107,7 +126,7 @@ def run_single_api_benchmark_item(
             }
         )
         if record.get("status") == "succeeded":
-            result_response = get_job_result(options.api_base_url, job_id)
+            result_response = get_job_result(options.api_base_url, job_id, verify_tls=options.verify_tls)
             result = result_response.get("result", {})
             item["quality"] = inspect_result_quality(result)
             if label:
@@ -137,6 +156,7 @@ def submit_upload_job(video_path: Path, options: BenchmarkOptions) -> dict[str, 
         data=body,
         headers={"Content-Type": content_type},
         timeout=180,
+        verify_tls=options.verify_tls,
     )
 
 
@@ -145,11 +165,12 @@ def wait_for_job(
     job_id: str,
     poll_interval_sec: float,
     timeout_sec: float,
+    verify_tls: bool = True,
 ) -> dict[str, Any]:
     deadline = time.monotonic() + timeout_sec
     last_record: dict[str, Any] | None = None
     while time.monotonic() <= deadline:
-        last_record = get_job(api_base_url, job_id)
+        last_record = get_job(api_base_url, job_id, verify_tls=verify_tls)
         if last_record.get("status") in {"succeeded", "failed"}:
             return last_record
         time.sleep(poll_interval_sec)
@@ -158,12 +179,16 @@ def wait_for_job(
     return {**last_record, "status": "timeout", "error": f"job timeout after {timeout_sec:.0f}s"}
 
 
-def get_job(api_base_url: str, job_id: str) -> dict[str, Any]:
-    return _request_json(f"{api_base_url.rstrip('/')}/v1/jobs/{job_id}", timeout=60)
+def get_job(api_base_url: str, job_id: str, verify_tls: bool = True) -> dict[str, Any]:
+    return _request_json(f"{api_base_url.rstrip('/')}/v1/jobs/{job_id}", timeout=60, verify_tls=verify_tls)
 
 
-def get_job_result(api_base_url: str, job_id: str) -> dict[str, Any]:
-    return _request_json(f"{api_base_url.rstrip('/')}/v1/jobs/{job_id}/result", timeout=120)
+def get_job_result(api_base_url: str, job_id: str, verify_tls: bool = True) -> dict[str, Any]:
+    return _request_json(
+        f"{api_base_url.rstrip('/')}/v1/jobs/{job_id}/result",
+        timeout=120,
+        verify_tls=verify_tls,
+    )
 
 
 def inspect_result_quality(result: dict[str, Any]) -> dict[str, Any]:
@@ -274,10 +299,17 @@ def _request_json(
     data: bytes | None = None,
     headers: dict[str, str] | None = None,
     timeout: float = 60.0,
+    verify_tls: bool = True,
 ) -> dict[str, Any]:
-    request = urllib.request.Request(url, data=data, headers=headers or {}, method=method)
+    request_headers = {
+        "Accept": "application/json",
+        "User-Agent": "curl/8.7.1",
+        **(headers or {}),
+    }
+    request = urllib.request.Request(url, data=data, headers=request_headers, method=method)
+    context = None if verify_tls else ssl._create_unverified_context()  # noqa: S323
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
+        with urllib.request.urlopen(request, timeout=timeout, context=context) as response:  # noqa: S310
             return json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace") if exc.fp else str(exc)
@@ -294,6 +326,8 @@ def _nested_value(value: dict[str, Any], *keys: str) -> Any:
 
 
 def _is_known(value: Any) -> bool:
+    if isinstance(value, (list, dict, set, tuple)):
+        return bool(value)
     return value not in {None, "", "확인불가", "unknown", "Unknown", "UNKNOWN"}
 
 

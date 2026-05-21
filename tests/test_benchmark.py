@@ -40,6 +40,18 @@ def test_inspect_result_quality_measures_required_fields():
     assert quality["collision_known"] is True
 
 
+def test_inspect_result_quality_handles_list_values_inside_collision():
+    quality = inspect_result_quality(
+        {
+            "objective_summary": "요약",
+            "scene_type": {"value": "확인불가"},
+            "collision": {"source": ["chunk_1"], "evidence": [], "occurred": ["likely"]},
+        }
+    )
+
+    assert quality["collision_known"] is True
+
+
 def test_summarize_benchmark_items_reports_rates():
     summary = summarize_benchmark_items(
         [
@@ -87,3 +99,4 @@ def test_benchmark_options_defaults_are_json_serializable(tmp_path):
     options = BenchmarkOptions(api_base_url="http://localhost", video_root=tmp_path)
 
     assert json.dumps({"api_base_url": options.api_base_url, "sample_limit": options.sample_limit})
+    assert options.verify_tls is True
