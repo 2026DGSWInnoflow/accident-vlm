@@ -517,6 +517,8 @@ class OpenAICompatibleVLMBackend:
             "messages": [{"role": "user", "content": content}],
             "temperature": 0,
             "max_tokens": _final_max_new_tokens(),
+            "chat_template_kwargs": {"enable_thinking": False},
+            "response_format": {"type": "json_object"},
         }
         request = urllib.request.Request(
             f"{self.base_url}/chat/completions",

@@ -430,6 +430,8 @@ def test_openai_compatible_backend_posts_chat_completion(monkeypatch, tmp_path) 
     assert captured["timeout"] == 123
     assert captured["payload"]["model"] == "qwen-awq"
     assert captured["payload"]["temperature"] == 0
+    assert captured["payload"]["chat_template_kwargs"] == {"enable_thinking": False}
+    assert captured["payload"]["response_format"] == {"type": "json_object"}
     assert captured["payload"]["messages"][0]["content"][0] == {"type": "text", "text": "prompt"}
     assert captured["payload"]["messages"][0]["content"][1]["image_url"]["url"] == "data:image/jpeg;base64,YWJj"
     assert captured["headers"]["Authorization"] == "Bearer secret"
