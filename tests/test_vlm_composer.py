@@ -12,6 +12,7 @@ from accident_vlm.modules.vlm_composer import (
     render_qwen_chat_template,
     _configure_transformers_loading,
     _collect_evidence_image_paths,
+    _model_dtype,
     _parse_max_memory,
 )
 from accident_vlm.schemas.preprocessing import PipelineContext
@@ -332,6 +333,18 @@ def test_parse_max_memory_accepts_gpu_and_cpu_entries() -> None:
         3: "22GiB",
         "cpu": "64GiB",
     }
+
+
+def test_model_dtype_defaults_to_bfloat16_for_quantized_models(monkeypatch) -> None:
+    monkeypatch.delenv("ACCIDENT_VLM_MODEL_DTYPE", raising=False)
+
+    assert _model_dtype() == "bfloat16"
+
+
+def test_model_dtype_can_be_overridden(monkeypatch) -> None:
+    monkeypatch.setenv("ACCIDENT_VLM_MODEL_DTYPE", "float16")
+
+    assert _model_dtype() == "float16"
 
 
 def test_configure_transformers_loading_disables_allocator_warmup(monkeypatch) -> None:

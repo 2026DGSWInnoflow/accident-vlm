@@ -362,7 +362,7 @@ class TransformersQwenBackend:
         _configure_transformers_loading(modeling_utils)
         model_kwargs = {
             "device_map": device,
-            "dtype": "auto",
+            "dtype": _model_dtype(),
             "low_cpu_mem_usage": True,
             "trust_remote_code": True,
         }
@@ -474,6 +474,10 @@ def _parse_max_memory(raw_value: str | None) -> dict[Any, str]:
             normalized_key = int(normalized_key)
         max_memory[normalized_key] = value.strip()
     return max_memory
+
+
+def _model_dtype() -> str:
+    return os.getenv("ACCIDENT_VLM_MODEL_DTYPE", "bfloat16")
 
 
 def _configure_transformers_loading(modeling_utils: Any) -> None:
