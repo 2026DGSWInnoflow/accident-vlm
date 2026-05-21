@@ -1,4 +1,5 @@
 import json
+import urllib.error
 
 from accident_vlm.modules.vlm_composer import (
     SYSTEM_PROMPT,
@@ -18,6 +19,7 @@ from accident_vlm.modules.vlm_composer import (
     _format_non_retriable_vlm_error,
     _image_data_url,
     _is_retriable_vlm_error,
+    _read_http_error_detail,
     _model_dtype,
     _parse_max_memory,
 )
@@ -436,6 +438,55 @@ def test_openai_compatible_backend_posts_chat_completion(monkeypatch, tmp_path) 
     assert captured["headers"]["Authorization"] == "Bearer secret"
 
 
+def test_openai_compatible_backend_includes_http_error_body(monkeypatch, tmp_path) -> None:
+    image_path = tmp_path / "sample.jpg"
+    image_path.write_bytes(b"abc")
+
+    def fake_urlopen(_request, timeout):
+        assert timeout == 300.0
+        raise urllib.error.HTTPError(
+            url="http://localhost:30000/v1/chat/completions",
+            code=400,
+            msg="Bad Request",
+            hdrs={},
+            fp=None,
+        )
+
+    monkeypatch.setattr("accident_vlm.modules.vlm_composer.urllib.request.urlopen", fake_urlopen)
+    monkeypatch.setattr(
+        "accident_vlm.modules.vlm_composer._read_http_error_detail",
+        lambda _error: '{"error":"model not found"}',
+    )
+    backend = OpenAICompatibleVLMBackend("wrong-model", "http://localhost:30000/v1")
+
+    try:
+        backend.generate_json("prompt", [str(image_path)])
+    except RuntimeError as exc:
+        assert "HTTP 400" in str(exc)
+        assert "model not found" in str(exc)
+    else:
+        raise AssertionError("expected HTTP error detail")
+
+
+def test_read_http_error_detail_reads_body() -> None:
+    class FakeBody:
+        def read(self) -> bytes:
+            return b'{"error":"bad request detail"}'
+
+        def close(self) -> None:
+            return None
+
+    error = urllib.error.HTTPError(
+        url="http://localhost",
+        code=400,
+        msg="Bad Request",
+        hdrs={},
+        fp=FakeBody(),
+    )
+
+    assert _read_http_error_detail(error) == '{"error":"bad request detail"}'
+
+
 def test_get_qwen_backend_can_use_openai_compatible_backend(monkeypatch) -> None:
     monkeypatch.setenv("ACCIDENT_VLM_BACKEND", "openai")
     monkeypatch.setenv("ACCIDENT_VLM_OPENAI_BASE_URL", "http://localhost:8001/v1")
@@ -450,6 +501,17 @@ def test_get_qwen_backend_can_use_openai_compatible_backend(monkeypatch) -> None
     assert backend.base_url == "http://localhost:8001/v1"
     assert backend.api_key == "secret"
     assert backend.timeout_sec == 77
+
+
+def test_get_qwen_backend_can_override_openai_served_model(monkeypatch) -> None:
+    monkeypatch.setenv("ACCIDENT_VLM_BACKEND", "openai")
+    monkeypatch.setenv("ACCIDENT_VLM_OPENAI_MODEL", "served-qwen-awq")
+    get_qwen_backend.cache_clear()
+
+    backend = get_qwen_backend("/local/path/Qwen3.6-27B-AWQ-INT4", "auto")
+
+    assert isinstance(backend, OpenAICompatibleVLMBackend)
+    assert backend.model_id == "served-qwen-awq"
 
 
 def test_parse_max_memory_accepts_gpu_and_cpu_entries() -> None:

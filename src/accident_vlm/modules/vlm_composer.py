@@ -3,6 +3,7 @@ import base64
 import json
 import mimetypes
 import os
+import urllib.error
 import urllib.request
 from contextlib import contextmanager
 from functools import lru_cache
@@ -525,8 +526,14 @@ class OpenAICompatibleVLMBackend:
             headers=_openai_headers(self.api_key),
             method="POST",
         )
-        with urllib.request.urlopen(request, timeout=self.timeout_sec) as response:  # noqa: S310
-            body = json.loads(response.read().decode("utf-8"))
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout_sec) as response:  # noqa: S310
+                body = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            detail = _read_http_error_detail(exc)
+            raise RuntimeError(
+                f"OpenAI-compatible VLM request failed with HTTP {exc.code}: {detail}"
+            ) from exc
         text = body["choices"][0]["message"]["content"]
         return parse_json_response(text)
 
@@ -536,6 +543,16 @@ def _openai_headers(api_key: str | None) -> dict[str, str]:
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
     return headers
+
+
+def _read_http_error_detail(error: urllib.error.HTTPError) -> str:
+    try:
+        detail = error.read().decode("utf-8", errors="replace").strip()
+    except Exception:  # noqa: BLE001
+        detail = ""
+    if not detail:
+        detail = error.reason if isinstance(error.reason, str) else str(error)
+    return detail[:2000]
 
 
 def _image_data_url(path: str) -> str:
@@ -604,7 +621,8 @@ def _get_qwen_backend(normalized_model_id: str, normalized_device: str = "auto")
         base_url = os.getenv("ACCIDENT_VLM_OPENAI_BASE_URL", "http://127.0.0.1:8001/v1")
         api_key = os.getenv("ACCIDENT_VLM_OPENAI_API_KEY")
         timeout_sec = float(os.getenv("ACCIDENT_VLM_OPENAI_TIMEOUT_SEC", "300"))
-        return OpenAICompatibleVLMBackend(normalized_model_id, base_url, api_key, timeout_sec)
+        served_model_id = os.getenv("ACCIDENT_VLM_OPENAI_MODEL", normalized_model_id)
+        return OpenAICompatibleVLMBackend(served_model_id, base_url, api_key, timeout_sec)
     return TransformersQwenBackend(normalized_model_id, device=normalized_device)
 
 
