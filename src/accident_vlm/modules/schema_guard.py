@@ -1,3 +1,4 @@
+import json
 from copy import deepcopy
 
 from accident_vlm.schemas.final_output import AccidentFactOutput
@@ -75,8 +76,7 @@ def normalize_vlm_payload(payload: dict) -> dict:
 def repair_and_constrain_payload(payload: dict) -> dict:
     repaired = deepcopy(DEFAULT_PAYLOAD)
     _deep_update(repaired, normalize_vlm_payload(payload))
-    if not isinstance(repaired.get("uncertainties"), list):
-        repaired["uncertainties"] = [str(repaired["uncertainties"])]
+    repaired["uncertainties"] = _normalize_uncertainties(repaired.get("uncertainties"))
 
     _require_evidence_for_field(repaired, "scene_type")
     signal = repaired.get("traffic_control", {}).get("signal")
@@ -91,6 +91,35 @@ def repair_and_constrain_payload(payload: dict) -> dict:
     _require_timeline_evidence(repaired)
     _require_actor_evidence(repaired)
     return repaired
+
+
+def _normalize_uncertainties(value) -> list[str]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        value = [value]
+
+    normalized: list[str] = []
+    for item in value:
+        message = _uncertainty_to_string(item)
+        if message and message not in normalized:
+            normalized.append(message)
+    return normalized
+
+
+def _uncertainty_to_string(value) -> str:
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, dict):
+        for key in ("description", "message", "reason", "note", "value"):
+            candidate = value.get(key)
+            if isinstance(candidate, str) and candidate.strip():
+                source = value.get("source")
+                if isinstance(source, list) and source:
+                    return f"{candidate.strip()} (source: {', '.join(map(str, source))})"
+                return candidate.strip()
+        return json.dumps(value, ensure_ascii=False, sort_keys=True)
+    return str(value).strip()
 
 
 def _deep_update(target: dict, source: dict) -> None:

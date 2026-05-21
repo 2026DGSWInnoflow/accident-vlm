@@ -162,3 +162,31 @@ def test_repair_and_constrain_payload_requires_evidence_for_speed_collision_and_
     assert "근거 없는 값이 확인불가로 조정됨: speed_and_distance.speed_estimates[0]" in repaired[
         "uncertainties"
     ]
+
+
+def test_repair_and_constrain_payload_normalizes_structured_uncertainties():
+    payload = _minimal_final_output_payload("객관 사실 요약")
+    payload["uncertainties"] = [
+        {"description": "영상 화질 저하", "source": ["chunk_1", "chunk_2"]},
+        {"reason": "신호등 확인불가"},
+        123,
+    ]
+
+    repaired = repair_and_constrain_payload(payload)
+
+    assert repaired["uncertainties"] == [
+        "영상 화질 저하 (source: chunk_1, chunk_2)",
+        "신호등 확인불가",
+        "123",
+    ]
+
+
+def test_validate_final_output_accepts_structured_uncertainties_from_vlm():
+    payload = _minimal_final_output_payload("객관 사실 요약")
+    payload["uncertainties"] = [
+        {"description": "영상이 흐림", "source": ["chunk_1"]},
+    ]
+
+    output = validate_final_output(payload)
+
+    assert output.uncertainties == ["영상이 흐림 (source: chunk_1)"]
