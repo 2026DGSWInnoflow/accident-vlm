@@ -33,6 +33,7 @@ vlm = [
     "torch>=2.2",
     "transformers>=4.45",
     "accelerate>=0.33",
+    "compressed-tensors>=0.8",
     "pillow>=10.0",
 ]
 dev = [

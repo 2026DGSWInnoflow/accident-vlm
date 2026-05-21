@@ -93,6 +93,13 @@ export ACCIDENT_VLM_FINAL_MAX_NEW_TOKENS=512
 export ACCIDENT_VLM_USE_CACHE=0
 ```
 
+AWQ/INT4 models that use compressed-tensors quantization require the `vlm`
+extra, or at minimum:
+
+```bash
+pip install compressed-tensors
+```
+
 ## API Server
 
 Run the API server:
