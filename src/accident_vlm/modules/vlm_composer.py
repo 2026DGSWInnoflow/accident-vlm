@@ -437,12 +437,7 @@ class TransformersQwenBackend:
                 }
             )
 
-        final_prompt = (
-            f"{prompt}\n\n"
-            "The evidence images were analyzed in chunks to fit the model context. "
-            "Use all chunk observations below as evidence and return the final JSON only.\n"
-            f"{json.dumps(chunk_summaries, ensure_ascii=False, indent=2)}"
-        )
+        final_prompt = _build_chunked_final_prompt(chunk_summaries)
         return parse_json_response(self._generate_text(final_prompt, [], max_new_tokens=_final_max_new_tokens()))
 
     def _generate_text(self, prompt: str, images: list[Any], max_new_tokens: int | None = None) -> str:
@@ -505,6 +500,41 @@ class OpenAICompatibleVLMBackend:
         self.timeout_sec = timeout_sec
 
     def generate_json(self, prompt: str, image_paths: list[str]) -> dict[str, Any]:
+        chunk_size = int(os.getenv("ACCIDENT_VLM_IMAGE_CHUNK_SIZE", "0"))
+        if chunk_size > 0 and len(image_paths) > chunk_size:
+            return self._generate_chunked_json(prompt, image_paths, chunk_size)
+        return parse_json_response(
+            self._generate_text(prompt, image_paths, max_tokens=_final_max_new_tokens())
+        )
+
+    def _generate_chunked_json(self, prompt: str, image_paths: list[str], chunk_size: int) -> dict[str, Any]:
+        chunk_summaries: list[dict[str, Any]] = []
+        total_chunks = (len(image_paths) + chunk_size - 1) // chunk_size
+        for chunk_index, start in enumerate(range(0, len(image_paths), chunk_size), start=1):
+            chunk_paths = image_paths[start : start + chunk_size]
+            chunk_prompt = (
+                "Analyze only this evidence image chunk. Do not decide fault or legal liability. "
+                "Return concise Korean observations grounded only in visible evidence.\n"
+                f"Chunk {chunk_index}/{total_chunks}; image indexes {start + 1}-{start + len(chunk_paths)}.\n\n"
+                "Focus on visible actors, traffic lights/signs, road type, lane markings, "
+                "weather/visibility, impact candidates, and uncertainty."
+            )
+            chunk_summaries.append(
+                {
+                    "chunk_index": chunk_index,
+                    "image_indexes": list(range(start + 1, start + len(chunk_paths) + 1)),
+                    "observations": self._generate_text(
+                        chunk_prompt,
+                        chunk_paths,
+                        max_tokens=_chunk_max_new_tokens(),
+                    ),
+                }
+            )
+
+        final_prompt = _build_chunked_final_prompt(chunk_summaries)
+        return parse_json_response(self._generate_text(final_prompt, [], max_tokens=_final_max_new_tokens()))
+
+    def _generate_text(self, prompt: str, image_paths: list[str], max_tokens: int) -> str:
         content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
         for path in image_paths:
             content.append(
@@ -517,7 +547,7 @@ class OpenAICompatibleVLMBackend:
             "model": self.model_id,
             "messages": [{"role": "user", "content": content}],
             "temperature": 0,
-            "max_tokens": _final_max_new_tokens(),
+            "max_tokens": max_tokens,
             "chat_template_kwargs": {"enable_thinking": False},
         }
         request = urllib.request.Request(
@@ -535,7 +565,19 @@ class OpenAICompatibleVLMBackend:
                 f"OpenAI-compatible VLM request failed with HTTP {exc.code}: {detail}"
             ) from exc
         text = body["choices"][0]["message"]["content"]
-        return parse_json_response(text)
+        return text
+
+
+def _build_chunked_final_prompt(chunk_summaries: list[dict[str, Any]]) -> str:
+    return (
+        f"{SYSTEM_PROMPT}\n\n"
+        "Return only JSON matching this exact shape. Keep enum-like values in Korean "
+        "when they are visible; use 확인불가/unknown when unsupported.\n"
+        f"{json.dumps(OUTPUT_TEMPLATE, ensure_ascii=False, indent=2)}\n\n"
+        "The evidence images were analyzed in chunks to fit the model context. "
+        "Use all chunk observations below as evidence and return the final JSON only.\n"
+        f"{json.dumps(chunk_summaries, ensure_ascii=False, indent=2)}"
+    )
 
 
 def _openai_headers(api_key: str | None) -> dict[str, str]:

@@ -371,7 +371,8 @@ def test_qwen_generate_json_chunks_images_without_dropping_evidence(monkeypatch)
     ]
     assert [tokens for _, _, tokens in calls] == [128, 128, 128, 512]
     assert "chunk saw 2 images" in calls[-1][0]
-    assert "full prompt" in calls[-1][0]
+    assert "full prompt" not in calls[-1][0]
+    assert "Return only JSON" in calls[-1][0]
 
 
 def test_image_data_url_encodes_local_image(tmp_path) -> None:
@@ -485,6 +486,36 @@ def test_read_http_error_detail_reads_body() -> None:
     )
 
     assert _read_http_error_detail(error) == '{"error":"bad request detail"}'
+
+
+def test_openai_compatible_backend_chunks_images_without_dropping_evidence(monkeypatch) -> None:
+    monkeypatch.setenv("ACCIDENT_VLM_IMAGE_CHUNK_SIZE", "2")
+    monkeypatch.setenv("ACCIDENT_VLM_CHUNK_MAX_NEW_TOKENS", "128")
+    monkeypatch.setenv("ACCIDENT_VLM_FINAL_MAX_NEW_TOKENS", "512")
+    backend = OpenAICompatibleVLMBackend("qwen-awq", "http://localhost:30000/v1")
+    calls = []
+
+    def fake_generate_text(prompt: str, image_paths: list[str], max_tokens: int) -> str:
+        calls.append((prompt, list(image_paths), max_tokens))
+        if image_paths:
+            return f"chunk saw {len(image_paths)} images"
+        return '{"schema_version":"accident_video_facts.v1","objective_summary":"ok"}'
+
+    backend._generate_text = fake_generate_text
+
+    result = backend.generate_json("full prompt", ["a.jpg", "b.jpg", "c.jpg", "d.jpg", "e.jpg"])
+
+    assert result["schema_version"] == "accident_video_facts.v1"
+    assert [images for _, images, _ in calls] == [
+        ["a.jpg", "b.jpg"],
+        ["c.jpg", "d.jpg"],
+        ["e.jpg"],
+        [],
+    ]
+    assert [tokens for _, _, tokens in calls] == [128, 128, 128, 512]
+    assert "chunk saw 2 images" in calls[-1][0]
+    assert "full prompt" not in calls[-1][0]
+    assert "Return only JSON" in calls[-1][0]
 
 
 def test_get_qwen_backend_can_use_openai_compatible_backend(monkeypatch) -> None:
