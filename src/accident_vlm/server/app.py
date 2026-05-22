@@ -63,6 +63,7 @@ def create_app(job_root: Path = Path("outputs/api_jobs")) -> FastAPI:
         background_tasks: BackgroundTasks,
         file: UploadFile = File(...),
         mode: AnalysisMode = Form(AnalysisMode.PRE_VLM),
+        enable_ocr: bool = Form(False),
         ocr_backend: str = Form("auto"),
         object_detector_backend: str = Form(QUALITY_OBJECT_DETECTOR_BACKEND),
         object_detector_model: str = Form(QUALITY_OBJECT_DETECTOR_MODEL),
@@ -85,6 +86,7 @@ def create_app(job_root: Path = Path("outputs/api_jobs")) -> FastAPI:
     ) -> JobCreatedResponse:
         options = AnalysisOptions(
             mode=mode,
+            enable_ocr=enable_ocr,
             ocr_backend=ocr_backend,
             object_detector_backend=object_detector_backend,
             object_detector_model=object_detector_model,

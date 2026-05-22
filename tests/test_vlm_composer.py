@@ -312,7 +312,8 @@ def test_render_qwen_chat_template_disables_thinking() -> None:
     assert processor.kwargs["tokenize"] is False
 
 
-def test_compose_with_retry_retries_after_json_failure() -> None:
+def test_compose_with_retry_retries_after_json_failure_when_fallback_disabled(monkeypatch) -> None:
+    monkeypatch.setenv("ACCIDENT_VLM_DISABLE_FALLBACK_JSON", "1")
     backend = FlakyBackend()
 
     result = compose_with_retry(
@@ -718,10 +719,32 @@ def test_compose_final_facts_returns_conservative_fallback_after_invalid_json(mo
         backend,
     )
 
-    assert backend.calls == 3
+    assert backend.calls == 1
     assert output.schema_version == "accident_video_facts.v1"
     assert output.objective_summary == "VLM JSON 출력이 불완전하여 보수적 fallback 결과를 반환함."
     assert any("VLM JSON parsing failed" in item for item in output.uncertainties)
+
+
+def test_openai_chunked_backend_returns_chunk_fallback_when_final_json_is_invalid(monkeypatch) -> None:
+    monkeypatch.setenv("ACCIDENT_VLM_IMAGE_CHUNK_SIZE", "2")
+    backend = OpenAICompatibleVLMBackend("qwen-awq", "http://localhost:30000/v1")
+    calls = []
+
+    def fake_generate_text(prompt: str, image_paths: list[str], max_tokens: int, image_records=None, chunk_label=None):
+        calls.append((prompt, list(image_paths), chunk_label))
+        if image_paths:
+            return f"{chunk_label}: vehicle visible"
+        return '{"schema_version":"accident_video_facts.v1"'
+
+    backend._generate_text = fake_generate_text
+
+    result = backend.generate_json("prompt", ["a.jpg", "b.jpg", "c.jpg"], [{"path": "a.jpg"}])
+
+    assert result["schema_version"] == "accident_video_facts.v1"
+    assert result["evidence_index"]["fallback_reason"] == "chunked_final_json_parse_failure"
+    assert len(result["evidence_index"]["chunk_observations"]) == 2
+    assert "vehicle visible" in result["evidence_index"]["chunk_observations"][0]["observations"]
+    assert [call[2] for call in calls] == ["chunk 1/2", "chunk 2/2", "final text-only"]
 
 
 def test_get_qwen_backend_can_use_openai_compatible_backend(monkeypatch) -> None:

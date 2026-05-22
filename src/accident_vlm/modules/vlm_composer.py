@@ -164,6 +164,8 @@ def compose_with_retry(
             _clear_cuda_cache()
             if not _is_retriable_vlm_error(exc):
                 raise RuntimeError(_format_non_retriable_vlm_error(exc)) from exc
+            if _allow_fallback_json() and _is_json_error(exc):
+                return _fallback_final_payload(context, exc)
             if _is_cuda_oom(exc):
                 image_limit, compact_prompt = _next_oom_strategy(image_limit, compact_prompt)
             if attempt == max_attempts - 1:
@@ -222,6 +224,22 @@ def _fallback_final_payload(context: PipelineContext, error: Exception) -> dict[
     payload["uncertainties"] = [
         *payload.get("uncertainties", []),
         f"VLM JSON parsing failed after retries: {error}",
+    ]
+    return payload
+
+
+def _fallback_payload_from_chunk_summaries(
+    chunk_summaries: list[dict[str, Any]],
+    error: Exception,
+) -> dict[str, Any]:
+    payload = deepcopy(OUTPUT_TEMPLATE)
+    payload["evidence_index"] = {
+        "chunk_observations": chunk_summaries,
+        "fallback_reason": "chunked_final_json_parse_failure",
+    }
+    payload["objective_summary"] = "VLM final JSON 출력이 불완전하여 chunk 관찰 기반 fallback 결과를 반환함."
+    payload["uncertainties"] = [
+        f"VLM final JSON parsing failed after chunk analysis: {error}",
     ]
     return payload
 
@@ -630,9 +648,19 @@ class TransformersQwenBackend:
             )
 
         final_prompt = _compact_chunked_final_prompt(chunk_summaries)
-        return parse_json_response(
-            self._generate_text(final_prompt, [], max_new_tokens=_final_max_new_tokens(), chunk_label="final text-only")
-        )
+        try:
+            return parse_json_response(
+                self._generate_text(
+                    final_prompt,
+                    [],
+                    max_new_tokens=_final_max_new_tokens(),
+                    chunk_label="final text-only",
+                )
+            )
+        except Exception as exc:
+            if _allow_fallback_json() and _is_json_error(exc):
+                return _fallback_payload_from_chunk_summaries(chunk_summaries, exc)
+            raise
 
     def _generate_text(
         self,
@@ -838,14 +866,19 @@ class OpenAICompatibleVLMBackend:
             )
 
         final_prompt = _compact_chunked_final_prompt(chunk_summaries)
-        return parse_json_response(
-            self._generate_text(
-                final_prompt,
-                [],
-                max_tokens=_final_max_new_tokens(),
-                chunk_label="final text-only",
+        try:
+            return parse_json_response(
+                self._generate_text(
+                    final_prompt,
+                    [],
+                    max_tokens=_final_max_new_tokens(),
+                    chunk_label="final text-only",
+                )
             )
-        )
+        except Exception as exc:
+            if _allow_fallback_json() and _is_json_error(exc):
+                return _fallback_payload_from_chunk_summaries(chunk_summaries, exc)
+            raise
 
     def _generate_text(
         self,

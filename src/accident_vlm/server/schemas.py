@@ -38,6 +38,7 @@ class JobStatus(StrEnum):
 
 class AnalysisOptions(BaseModel):
     mode: AnalysisMode = AnalysisMode.PRE_VLM
+    enable_ocr: bool = False
     ocr_backend: str = "auto"
     object_detector_backend: str = QUALITY_OBJECT_DETECTOR_BACKEND
     object_detector_model: str = QUALITY_OBJECT_DETECTOR_MODEL

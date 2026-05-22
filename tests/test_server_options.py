@@ -12,6 +12,7 @@ def test_analysis_options_defaults_to_quality_pipeline(tmp_path: Path) -> None:
     assert config.regular_frame_interval_sec == 0.5
     assert config.max_selected_frames == 32
     assert config.enable_motion_keyframes is True
+    assert config.enable_ocr is False
     assert config.max_motion_keyframes == 16
     assert config.motion_sample_interval_sec == 0.25
     assert config.min_motion_change_score == 6.0
@@ -29,6 +30,7 @@ def test_config_from_options_maps_extended_pipeline_options(tmp_path: Path) -> N
             object_detector_backend="bytetrack",
             regular_frame_interval_sec=0.5,
             max_selected_frames=24,
+            enable_ocr=True,
             enable_motion_keyframes=False,
             enable_segment_tracking=False,
             max_motion_keyframes=12,
@@ -45,6 +47,7 @@ def test_config_from_options_maps_extended_pipeline_options(tmp_path: Path) -> N
     )
 
     assert config.object_detector_backend == "bytetrack"
+    assert config.enable_ocr is True
     assert config.enable_motion_keyframes is False
     assert config.enable_segment_tracking is False
     assert config.max_motion_keyframes == 12

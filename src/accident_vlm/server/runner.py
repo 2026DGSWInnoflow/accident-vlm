@@ -27,6 +27,7 @@ def config_from_options(options: AnalysisOptions, output_dir: Path) -> PipelineC
         max_segment_tracking_frames=options.max_segment_tracking_frames,
         vlm_frame_budget=options.vlm_frame_budget,
         max_event_candidates=options.max_event_candidates,
+        enable_ocr=options.enable_ocr,
         lane_width_m=options.lane_width_m,
         ocr_backend=options.ocr_backend,
         object_detector_backend=options.object_detector_backend,
