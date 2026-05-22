@@ -210,6 +210,7 @@ def analyze_video_pre_vlm(
                 output_dir=run_output_dir / "segment_tracking_frames",
                 stride_frames=active_config.segment_tracking_stride_frames,
                 max_frames_per_segment=active_config.max_segment_tracking_frames,
+                max_total_frames=active_config.max_segment_tracking_frames,
             )
             context.tracks = consolidate_tracks([*context.tracks, *segment_tracks])
             context.overlays, context.crops = build_visual_evidence(

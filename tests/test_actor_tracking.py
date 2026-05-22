@@ -133,6 +133,39 @@ def test_detect_and_track_segments_extracts_dense_segment_frames(monkeypatch, tm
     assert len(tracks[0]["positions"]) == 4
 
 
+def test_detect_and_track_segments_caps_total_extracted_frames(monkeypatch, tmp_path) -> None:
+    calls = {}
+
+    def fake_extract(video_path, selected_frames, output_dir):
+        calls["indices"] = [frame.frame_index for frame in selected_frames]
+        return [
+            frame.model_copy(update={"path": str(tmp_path / f"{frame.id}.jpg")})
+            for frame in selected_frames
+        ]
+
+    monkeypatch.setattr("accident_vlm.modules.actor_tracking.extract_selected_frames", fake_extract)
+    monkeypatch.setattr(
+        "accident_vlm.modules.actor_tracking._read_frame_shape",
+        lambda path: (100, 200),
+    )
+
+    detect_and_track_segments(
+        video_path=Path("/tmp/video.mp4"),
+        selected_segments=[
+            {"id": "seg_event_001", "start": "00:00.000", "end": "00:10.000"},
+            {"id": "seg_event_002", "start": "00:10.000", "end": "00:20.000"},
+        ],
+        fps=10,
+        detector=FakeDetector(),
+        output_dir=tmp_path / "segments",
+        stride_frames=1,
+        max_frames_per_segment=4,
+        max_total_frames=6,
+    )
+
+    assert calls["indices"] == [0, 1, 2, 3, 100, 101]
+
+
 def test_accident_actor_taxonomy_and_detector_profile_are_explicit() -> None:
     assert "kickboard" in ACCIDENT_ACTOR_TAXONOMY
     assert ACCIDENT_ACTOR_TAXONOMY["traffic_light"]["korean_label"] == "신호등"

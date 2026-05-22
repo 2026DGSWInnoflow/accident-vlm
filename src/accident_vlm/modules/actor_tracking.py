@@ -324,6 +324,7 @@ def detect_and_track_segments(
     output_dir: Path,
     stride_frames: int = 3,
     max_frames_per_segment: int = 90,
+    max_total_frames: int | None = None,
 ) -> list[dict]:
     if fps <= 0:
         raise ValueError("fps must be positive")
@@ -331,16 +332,22 @@ def detect_and_track_segments(
         raise ValueError("stride_frames must be positive")
     if max_frames_per_segment <= 0:
         raise ValueError("max_frames_per_segment must be positive")
+    if max_total_frames is not None and max_total_frames <= 0:
+        raise ValueError("max_total_frames must be positive")
 
     segment_frames: list[SelectedFrame] = []
     for segment in selected_segments:
+        remaining = None if max_total_frames is None else max_total_frames - len(segment_frames)
+        if remaining is not None and remaining <= 0:
+            break
         try:
             start_frame = int(round(parse_timecode(str(segment.get("start"))) * fps))
             end_frame = int(round(parse_timecode(str(segment.get("end"))) * fps))
         except ValueError:
             continue
         frame_indices = list(range(start_frame, max(start_frame, end_frame) + 1, stride_frames))
-        for frame_index in frame_indices[:max_frames_per_segment]:
+        segment_limit = max_frames_per_segment if remaining is None else min(max_frames_per_segment, remaining)
+        for frame_index in frame_indices[:segment_limit]:
             segment_frames.append(
                 SelectedFrame(
                     id=f"{segment.get('id', 'seg')}_frame_{frame_index:06d}",
