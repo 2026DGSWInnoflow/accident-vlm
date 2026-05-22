@@ -8,6 +8,7 @@ from accident_vlm.modules.vlm_composer import (
     build_vlm_prompt,
     compose_with_backend,
     compose_with_retry,
+    compose_final_facts,
     get_qwen_backend,
     normalize_model_id,
     normalize_device,
@@ -109,6 +110,15 @@ class WeightPackedBackend:
     def generate_json(self, prompt: str, image_paths: list[str], image_records=None) -> dict:
         self.calls += 1
         raise KeyError("weight_packed")
+
+
+class InvalidJsonBackend:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def generate_json(self, prompt: str, image_paths: list[str], image_records=None) -> dict:
+        self.calls += 1
+        raise SyntaxError("'{'' was never closed")
 
 
 def test_build_vlm_prompt_includes_system_prompt_schema_and_evidence_package() -> None:
@@ -559,7 +569,7 @@ def test_openai_compatible_backend_posts_chat_completion(monkeypatch, tmp_path) 
     assert captured["timeout"] == 123
     assert captured["payload"]["model"] == "qwen-awq"
     assert captured["payload"]["temperature"] == 0
-    assert captured["payload"]["max_tokens"] == 384
+    assert captured["payload"]["max_tokens"] == 1024
     assert captured["payload"]["chat_template_kwargs"] == {"enable_thinking": False}
     assert captured["payload"]["extra_body"]["chat_template_kwargs"] == {"enable_thinking": False}
     assert captured["payload"]["top_p"] == 1
@@ -570,7 +580,7 @@ def test_openai_compatible_backend_posts_chat_completion(monkeypatch, tmp_path) 
     headers = {key.lower(): value for key, value in captured["headers"].items()}
     assert headers["authorization"] == "Bearer secret"
     assert headers["x-accident-vlm-image-count"] == "1"
-    assert headers["x-accident-vlm-max-tokens"] == "384"
+    assert headers["x-accident-vlm-max-tokens"] == "1024"
     assert headers["x-accident-vlm-chunk"] == "direct"
 
 
@@ -688,9 +698,30 @@ def test_openai_backend_defaults_to_compact_chunked_text_only_final(monkeypatch)
 
     assert result["objective_summary"] == "ok"
     assert [len(call["image_paths"]) for call in recorder.calls] == [4, 4, 0]
-    assert [call["max_tokens"] for call in recorder.calls] == [128, 128, 384]
+    assert [call["max_tokens"] for call in recorder.calls] == [128, 128, 1024]
     assert recorder.calls[-1]["chunk_label"] == "final text-only"
     assert "full prompt" not in recorder.calls[-1]["prompt"]
+
+
+def test_compose_final_facts_returns_conservative_fallback_after_invalid_json(monkeypatch) -> None:
+    monkeypatch.delenv("ACCIDENT_VLM_DISABLE_FALLBACK_JSON", raising=False)
+    backend = InvalidJsonBackend()
+
+    output = compose_final_facts(
+        PipelineContext(
+            video_path="sample.mp4",
+            evidence_package={
+                "vlm_storyboard": [{"slot": 1, "id": "frame_000001", "time": "00:01.000"}],
+                "precomputed_facts": {"metadata": {"duration_sec": 10.0}},
+            },
+        ),
+        backend,
+    )
+
+    assert backend.calls == 3
+    assert output.schema_version == "accident_video_facts.v1"
+    assert output.objective_summary == "VLM JSON 출력이 불완전하여 보수적 fallback 결과를 반환함."
+    assert any("VLM JSON parsing failed" in item for item in output.uncertainties)
 
 
 def test_get_qwen_backend_can_use_openai_compatible_backend(monkeypatch) -> None:

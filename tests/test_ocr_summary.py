@@ -1,7 +1,10 @@
 import cv2
 import numpy as np
+import sys
+import types
 
 from accident_vlm.modules.ocr import (
+    create_ocr_backend,
     extract_ocr_observations,
     parse_overlay_text,
     summarize_ocr_observations,
@@ -60,6 +63,24 @@ class EmptyOcrBackend:
 
     def read_text(self, image_path, field_hint=None):
         return []
+
+
+def test_create_easyocr_backend_defaults_to_cpu_to_avoid_vlm_gpu_oom(monkeypatch) -> None:
+    captured = {}
+
+    class FakeReader:
+        def __init__(self, languages, gpu):
+            captured["languages"] = languages
+            captured["gpu"] = gpu
+
+    monkeypatch.setitem(sys.modules, "easyocr", types.SimpleNamespace(Reader=FakeReader))
+    monkeypatch.delenv("ACCIDENT_VLM_EASYOCR_GPU", raising=False)
+    create_ocr_backend.cache_clear()
+
+    backend = create_ocr_backend("easyocr")
+
+    assert backend.name == "easyocr"
+    assert captured == {"languages": ["ko", "en"], "gpu": False}
 
 
 def test_parse_overlay_text_supports_dashcam_datetime_speed_and_gps_variants() -> None:

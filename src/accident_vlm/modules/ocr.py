@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from collections import Counter
 from functools import lru_cache
+import os
 from pathlib import Path
 from statistics import median
 from typing import Protocol
@@ -94,7 +95,13 @@ class EasyOcrBackend:
             import easyocr  # type: ignore
         except ImportError as exc:
             raise RuntimeError("easyocr is not installed") from exc
-        self._reader = easyocr.Reader(languages or ["ko", "en"], gpu=True)
+        use_gpu = os.getenv("ACCIDENT_VLM_EASYOCR_GPU", "0").lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+        self._reader = easyocr.Reader(languages or ["ko", "en"], gpu=use_gpu)
 
     def read_text(self, image_path: Path, field_hint: str | None = None) -> list[dict]:
         results = self._reader.readtext(str(image_path))

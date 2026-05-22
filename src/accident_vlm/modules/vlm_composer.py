@@ -6,6 +6,7 @@ import os
 import urllib.error
 import urllib.request
 from contextlib import contextmanager
+from copy import deepcopy
 from functools import lru_cache
 from pathlib import Path
 from threading import Lock
@@ -167,6 +168,8 @@ def compose_with_retry(
                 image_limit, compact_prompt = _next_oom_strategy(image_limit, compact_prompt)
             if attempt == max_attempts - 1:
                 break
+    if _allow_fallback_json() and last_error is not None and _is_json_error(last_error):
+        return _fallback_final_payload(context, last_error)
     raise ValueError(f"VLM JSON composition failed after {max_attempts} attempts: {last_error}")
 
 
@@ -184,6 +187,43 @@ def _is_retriable_vlm_error(error: Exception) -> bool:
         message = str(error).lower()
         return "vlm response" in message or "json" in message
     return False
+
+
+def _is_json_error(error: Exception) -> bool:
+    if isinstance(error, (json.JSONDecodeError, SyntaxError)):
+        return True
+    if isinstance(error, ValueError):
+        message = str(error).lower()
+        return "json" in message or "never closed" in message or "vlm response" in message
+    return False
+
+
+def _allow_fallback_json() -> bool:
+    return os.getenv("ACCIDENT_VLM_DISABLE_FALLBACK_JSON", "0").lower() not in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def _fallback_final_payload(context: PipelineContext, error: Exception) -> dict[str, Any]:
+    payload = deepcopy(OUTPUT_TEMPLATE)
+    payload["input_quality"] = (
+        context.input_quality.model_dump() if context.input_quality else {}
+    )
+    payload["evidence_index"] = {
+        "storyboard_observations": _compact_storyboard(
+            context.evidence_package.get("vlm_storyboard", [])
+        ),
+        "fallback_reason": "vlm_json_parse_failure",
+    }
+    payload["objective_summary"] = "VLM JSON 출력이 불완전하여 보수적 fallback 결과를 반환함."
+    payload["uncertainties"] = [
+        *payload.get("uncertainties", []),
+        f"VLM JSON parsing failed after retries: {error}",
+    ]
+    return payload
 
 
 def _format_non_retriable_vlm_error(error: Exception) -> str:
@@ -342,7 +382,7 @@ def _chunk_max_new_tokens() -> int:
 
 
 def _final_max_new_tokens() -> int:
-    return int(os.getenv("ACCIDENT_VLM_FINAL_MAX_NEW_TOKENS", "384"))
+    return int(os.getenv("ACCIDENT_VLM_FINAL_MAX_NEW_TOKENS", "1024"))
 
 
 def _image_chunk_size() -> int:
