@@ -137,6 +137,8 @@ def compose_with_backend(
     image_limit: int | None = None,
     compact_prompt: bool = False,
 ) -> dict[str, Any]:
+    if _force_compact_prompt():
+        compact_prompt = True
     prompt = build_vlm_prompt(context, compact=compact_prompt)
     image_records = _collect_evidence_image_records(context.evidence_package, max_images=image_limit)
     image_paths = [str(record["path"]) for record in image_records if record.get("path")]
@@ -336,11 +338,23 @@ def _sample_positions(positions: list[Any]) -> list[dict[str, Any]]:
 
 
 def _chunk_max_new_tokens() -> int:
-    return int(os.getenv("ACCIDENT_VLM_CHUNK_MAX_NEW_TOKENS", "192"))
+    return int(os.getenv("ACCIDENT_VLM_CHUNK_MAX_NEW_TOKENS", "128"))
 
 
 def _final_max_new_tokens() -> int:
-    return int(os.getenv("ACCIDENT_VLM_FINAL_MAX_NEW_TOKENS", "512"))
+    return int(os.getenv("ACCIDENT_VLM_FINAL_MAX_NEW_TOKENS", "384"))
+
+
+def _image_chunk_size() -> int:
+    return int(os.getenv("ACCIDENT_VLM_IMAGE_CHUNK_SIZE", "4"))
+
+
+def _force_text_only_final() -> bool:
+    return os.getenv("ACCIDENT_VLM_FORCE_TEXT_ONLY_FINAL", "1").lower() in {"1", "true", "yes", "on"}
+
+
+def _force_compact_prompt() -> bool:
+    return os.getenv("ACCIDENT_VLM_FORCE_COMPACT_PROMPT", "1").lower() in {"1", "true", "yes", "on"}
 
 
 def _clear_cuda_cache() -> None:
@@ -526,7 +540,7 @@ class TransformersQwenBackend:
         image_records: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         images = [self._load_image(path) for path in image_paths]
-        chunk_size = int(os.getenv("ACCIDENT_VLM_IMAGE_CHUNK_SIZE", "0"))
+        chunk_size = _image_chunk_size()
         if chunk_size > 0 and len(images) > chunk_size:
             return self._generate_chunked_json(prompt, images, image_paths, image_records or [], chunk_size)
         return parse_json_response(
@@ -570,12 +584,15 @@ class TransformersQwenBackend:
                         image_paths=chunk_paths,
                         max_new_tokens=_chunk_max_new_tokens(),
                         image_records=chunk_records,
+                        chunk_label=f"chunk {chunk_index}/{total_chunks}",
                     ),
                 }
             )
 
-        final_prompt = _build_chunked_final_prompt(chunk_summaries)
-        return parse_json_response(self._generate_text(final_prompt, [], max_new_tokens=_final_max_new_tokens()))
+        final_prompt = _compact_chunked_final_prompt(chunk_summaries)
+        return parse_json_response(
+            self._generate_text(final_prompt, [], max_new_tokens=_final_max_new_tokens(), chunk_label="final text-only")
+        )
 
     def _generate_text(
         self,
@@ -584,6 +601,7 @@ class TransformersQwenBackend:
         image_paths: list[str] | None = None,
         max_new_tokens: int | None = None,
         image_records: list[dict[str, Any]] | None = None,
+        chunk_label: str | None = None,
     ) -> str:
         messages = [
             {
@@ -733,8 +751,8 @@ class OpenAICompatibleVLMBackend:
         image_paths: list[str],
         image_records: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
-        chunk_size = int(os.getenv("ACCIDENT_VLM_IMAGE_CHUNK_SIZE", "0"))
-        if chunk_size > 0 and len(image_paths) > chunk_size:
+        chunk_size = _image_chunk_size()
+        if chunk_size > 0 and (len(image_paths) > chunk_size or (_force_text_only_final() and len(image_paths) > 1)):
             return self._generate_chunked_json(prompt, image_paths, image_records or [], chunk_size)
         return parse_json_response(
             self._generate_text(
@@ -742,6 +760,7 @@ class OpenAICompatibleVLMBackend:
                 image_paths,
                 max_tokens=_final_max_new_tokens(),
                 image_records=image_records,
+                chunk_label="direct",
             )
         )
 
@@ -773,12 +792,20 @@ class OpenAICompatibleVLMBackend:
                         chunk_paths,
                         max_tokens=_chunk_max_new_tokens(),
                         image_records=chunk_records,
+                        chunk_label=f"chunk {chunk_index}/{total_chunks}",
                     ),
                 }
             )
 
-        final_prompt = _build_chunked_final_prompt(chunk_summaries)
-        return parse_json_response(self._generate_text(final_prompt, [], max_tokens=_final_max_new_tokens()))
+        final_prompt = _compact_chunked_final_prompt(chunk_summaries)
+        return parse_json_response(
+            self._generate_text(
+                final_prompt,
+                [],
+                max_tokens=_final_max_new_tokens(),
+                chunk_label="final text-only",
+            )
+        )
 
     def _generate_text(
         self,
@@ -786,6 +813,7 @@ class OpenAICompatibleVLMBackend:
         image_paths: list[str],
         max_tokens: int,
         image_records: list[dict[str, Any]] | None = None,
+        chunk_label: str | None = None,
     ) -> str:
         content = build_interleaved_content(
             prompt,
@@ -797,13 +825,23 @@ class OpenAICompatibleVLMBackend:
             "model": self.model_id,
             "messages": [{"role": "user", "content": content}],
             "temperature": 0,
+            "top_p": 1,
             "max_tokens": max_tokens,
+            "stop": ["<think>", "</think>"],
             "chat_template_kwargs": {"enable_thinking": False},
+            "extra_body": {"chat_template_kwargs": {"enable_thinking": False}},
         }
+        prompt_chars = sum(len(item.get("text", "")) for item in content if item.get("type") == "text")
         request = urllib.request.Request(
             f"{self.base_url}/chat/completions",
             data=json.dumps(payload).encode("utf-8"),
-            headers=_openai_headers(self.api_key),
+            headers={
+                **_openai_headers(self.api_key),
+                "X-Accident-Vlm-Image-Count": str(len(image_paths)),
+                "X-Accident-Vlm-Prompt-Chars": str(prompt_chars),
+                "X-Accident-Vlm-Max-Tokens": str(max_tokens),
+                "X-Accident-Vlm-Chunk": chunk_label or "unknown",
+            },
             method="POST",
         )
         try:
@@ -834,6 +872,10 @@ def _build_chunked_final_prompt(
         "Use all chunk observations below as evidence and return the final JSON only.\n"
         f"{json.dumps(chunk_summaries, ensure_ascii=False, indent=2)}"
     )
+
+
+def _compact_chunked_final_prompt(chunk_summaries: list[dict[str, Any]]) -> str:
+    return _build_chunked_final_prompt(chunk_summaries)
 
 
 def _openai_headers(api_key: str | None) -> dict[str, str]:

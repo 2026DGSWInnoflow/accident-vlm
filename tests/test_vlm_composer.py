@@ -41,6 +41,32 @@ class RecordingBackend:
         return {"schema_version": "accident_video_facts.v1"}
 
 
+class RecordingChunkBackend:
+    def __init__(self) -> None:
+        self.calls = []
+
+    def _generate_text(
+        self,
+        prompt: str,
+        image_paths: list[str],
+        max_tokens: int,
+        image_records=None,
+        chunk_label=None,
+    ) -> str:
+        self.calls.append(
+            {
+                "prompt": prompt,
+                "image_paths": list(image_paths),
+                "max_tokens": max_tokens,
+                "image_records": image_records,
+                "chunk_label": chunk_label,
+            }
+        )
+        if image_paths:
+            return f"{chunk_label} saw {len(image_paths)} images"
+        return '{"schema_version":"accident_video_facts.v1","objective_summary":"ok"}'
+
+
 class FlakyBackend:
     def __init__(self) -> None:
         self.calls = 0
@@ -102,7 +128,8 @@ def test_build_vlm_prompt_includes_system_prompt_schema_and_evidence_package() -
     assert "확인불가" in prompt
 
 
-def test_compose_with_backend_sends_prompt_and_truthy_evidence_image_paths() -> None:
+def test_compose_with_backend_sends_prompt_and_truthy_evidence_image_paths(monkeypatch) -> None:
+    monkeypatch.setenv("ACCIDENT_VLM_FORCE_COMPACT_PROMPT", "0")
     context = PipelineContext(
         video_path="sample.mp4",
         evidence_package={
@@ -438,7 +465,14 @@ def test_qwen_generate_json_chunks_images_without_dropping_evidence(monkeypatch)
     ]
     reversed_image_records = list(reversed(image_records))
 
-    def fake_generate_text(prompt: str, images, image_paths=None, max_new_tokens=None, image_records=None):
+    def fake_generate_text(
+        prompt: str,
+        images,
+        image_paths=None,
+        max_new_tokens=None,
+        image_records=None,
+        chunk_label=None,
+    ):
         calls.append((prompt, list(images or []), max_new_tokens, image_records))
         if images:
             return f"chunk saw {len(images)} images"
@@ -525,11 +559,19 @@ def test_openai_compatible_backend_posts_chat_completion(monkeypatch, tmp_path) 
     assert captured["timeout"] == 123
     assert captured["payload"]["model"] == "qwen-awq"
     assert captured["payload"]["temperature"] == 0
+    assert captured["payload"]["max_tokens"] == 384
     assert captured["payload"]["chat_template_kwargs"] == {"enable_thinking": False}
+    assert captured["payload"]["extra_body"]["chat_template_kwargs"] == {"enable_thinking": False}
+    assert captured["payload"]["top_p"] == 1
+    assert captured["payload"]["stop"] == ["<think>", "</think>"]
     assert "Frame 01" in captured["payload"]["messages"][0]["content"][0]["text"]
     assert captured["payload"]["messages"][0]["content"][1]["image_url"]["url"] == "data:image/jpeg;base64,YWJj"
     assert captured["payload"]["messages"][0]["content"][-1] == {"type": "text", "text": "prompt"}
-    assert captured["headers"]["Authorization"] == "Bearer secret"
+    headers = {key.lower(): value for key, value in captured["headers"].items()}
+    assert headers["authorization"] == "Bearer secret"
+    assert headers["x-accident-vlm-image-count"] == "1"
+    assert headers["x-accident-vlm-max-tokens"] == "384"
+    assert headers["x-accident-vlm-chunk"] == "direct"
 
 
 def test_openai_compatible_backend_includes_http_error_body(monkeypatch, tmp_path) -> None:
@@ -594,8 +636,14 @@ def test_openai_compatible_backend_chunks_images_without_dropping_evidence(monke
     ]
     reversed_image_records = list(reversed(image_records))
 
-    def fake_generate_text(prompt: str, image_paths: list[str], max_tokens: int, image_records=None) -> str:
-        calls.append((prompt, list(image_paths), max_tokens, image_records))
+    def fake_generate_text(
+        prompt: str,
+        image_paths: list[str],
+        max_tokens: int,
+        image_records=None,
+        chunk_label=None,
+    ) -> str:
+        calls.append((prompt, list(image_paths), max_tokens, image_records, chunk_label))
         if image_paths:
             return f"chunk saw {len(image_paths)} images"
         return '{"schema_version":"accident_video_facts.v1","objective_summary":"ok"}'
@@ -609,18 +657,40 @@ def test_openai_compatible_backend_chunks_images_without_dropping_evidence(monke
     )
 
     assert result["schema_version"] == "accident_video_facts.v1"
-    assert [images for _, images, _, _ in calls] == [
+    assert [images for _, images, _, _, _ in calls] == [
         ["a.jpg", "b.jpg"],
         ["c.jpg", "d.jpg"],
         ["e.jpg"],
         [],
     ]
-    assert [tokens for _, _, tokens, _ in calls] == [128, 128, 128, 512]
+    assert [tokens for _, _, tokens, _, _ in calls] == [128, 128, 128, 512]
+    assert [label for _, _, _, _, label in calls] == ["chunk 1/3", "chunk 2/3", "chunk 3/3", "final text-only"]
     assert calls[0][3] == image_records[:2]
     assert "chunk saw 2 images" in calls[-1][0]
     assert "full prompt with verbose evidence package" not in calls[-1][0]
     assert "insurance_claim_fields" in calls[-1][0]
     assert "Use all chunk observations below as evidence" in calls[-1][0]
+
+
+def test_openai_backend_defaults_to_compact_chunked_text_only_final(monkeypatch) -> None:
+    monkeypatch.delenv("ACCIDENT_VLM_IMAGE_CHUNK_SIZE", raising=False)
+    monkeypatch.delenv("ACCIDENT_VLM_CHUNK_MAX_NEW_TOKENS", raising=False)
+    monkeypatch.delenv("ACCIDENT_VLM_FINAL_MAX_NEW_TOKENS", raising=False)
+    backend = OpenAICompatibleVLMBackend("qwen-awq", "http://localhost:30000/v1")
+    recorder = RecordingChunkBackend()
+    backend._generate_text = recorder._generate_text
+
+    result = backend.generate_json(
+        "full prompt " + ("x" * 1000),
+        [f"{index}.jpg" for index in range(8)],
+        [{"path": f"{index}.jpg"} for index in range(8)],
+    )
+
+    assert result["objective_summary"] == "ok"
+    assert [len(call["image_paths"]) for call in recorder.calls] == [4, 4, 0]
+    assert [call["max_tokens"] for call in recorder.calls] == [128, 128, 384]
+    assert recorder.calls[-1]["chunk_label"] == "final text-only"
+    assert "full prompt" not in recorder.calls[-1]["prompt"]
 
 
 def test_get_qwen_backend_can_use_openai_compatible_backend(monkeypatch) -> None:
