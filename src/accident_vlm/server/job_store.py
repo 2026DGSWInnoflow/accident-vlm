@@ -50,6 +50,27 @@ class JobStore:
     def set_running(self, job_id: str) -> JobRecord:
         record = self.get(job_id)
         record.status = JobStatus.RUNNING
+        record.stage = "running"
+        record.progress_message = None
+        self.save(record)
+        return record
+
+    def set_progress(
+        self,
+        job_id: str,
+        *,
+        stage: str,
+        progress_message: str | None = None,
+        pre_vlm_output_path: Path | None = None,
+        final_output_path: Path | None = None,
+    ) -> JobRecord:
+        record = self.get(job_id)
+        record.stage = stage
+        record.progress_message = progress_message
+        if pre_vlm_output_path is not None:
+            record.pre_vlm_output_path = str(pre_vlm_output_path)
+        if final_output_path is not None:
+            record.final_output_path = str(final_output_path)
         self.save(record)
         return record
 
@@ -63,6 +84,8 @@ class JobStore:
         record.status = JobStatus.SUCCEEDED
         record.pre_vlm_output_path = str(pre_vlm_output_path)
         record.final_output_path = str(final_output_path) if final_output_path else None
+        record.stage = "succeeded"
+        record.progress_message = None
         record.error = None
         self.save(record)
         return record
@@ -70,6 +93,8 @@ class JobStore:
     def set_failed(self, job_id: str, error: str) -> JobRecord:
         record = self.get(job_id)
         record.status = JobStatus.FAILED
+        record.stage = "failed"
+        record.progress_message = None
         record.error = error
         self.save(record)
         return record

@@ -16,6 +16,11 @@ PHASE_TARGETS = {
     "detail": 2,
 }
 
+PHASE_HARD_LIMITS = {
+    "insurance_context": 3,
+    "detail": 4,
+}
+
 PHASE_ORDER = {
     "insurance_context": 0,
     "scene_context": 1,
@@ -173,6 +178,7 @@ def _build_fact_index(facts: dict[str, Any]) -> dict[str, Any]:
 def _select_with_phase_targets(records: list[dict[str, Any]], max_items: int) -> list[dict[str, Any]]:
     selected: list[dict[str, Any]] = []
     selected_paths: set[str] = set()
+    phase_counts: dict[str, int] = {}
     by_phase = {
         phase: sorted(
             [record for record in records if record.get("phase") == phase],
@@ -183,23 +189,34 @@ def _select_with_phase_targets(records: list[dict[str, Any]], max_items: int) ->
     for phase, target in PHASE_TARGETS.items():
         phase_limit = min(target, max_items - len(selected))
         for record in by_phase.get(phase, [])[:phase_limit]:
-            _append_unique(selected, selected_paths, record)
+            _append_unique(selected, selected_paths, record, phase_counts)
             if len(selected) >= max_items:
                 return selected
 
     for record in sorted(records, key=_rank_key):
-        _append_unique(selected, selected_paths, record)
+        _append_unique(selected, selected_paths, record, phase_counts)
         if len(selected) >= max_items:
             break
     return selected
 
 
-def _append_unique(selected: list[dict[str, Any]], selected_paths: set[str], record: dict[str, Any]) -> None:
+def _append_unique(
+    selected: list[dict[str, Any]],
+    selected_paths: set[str],
+    record: dict[str, Any],
+    phase_counts: dict[str, int],
+) -> None:
     path = str(record.get("path") or "")
     if not path or path in selected_paths:
         return
+    phase = str(record.get("phase") or "")
+    phase_limit = PHASE_HARD_LIMITS.get(phase)
+    phase_count = phase_counts.get(phase, 0)
+    if phase_limit is not None and phase_count >= phase_limit:
+        return
     selected_paths.add(path)
     selected.append(record)
+    phase_counts[phase] = phase_count + 1
 
 
 def _linked_actor_ids(item: dict[str, Any], fact_index: dict[str, Any]) -> list[str]:
@@ -281,8 +298,9 @@ def _rank_key(item: dict[str, Any]) -> tuple[int, float, str]:
 
 
 def _storyboard_order_key(item: dict[str, Any]) -> tuple[float, int, int, str]:
+    seconds = _safe_seconds(item.get("time"))
     return (
-        _safe_seconds(item.get("time")) or 0.0,
+        seconds if seconds is not None else float("inf"),
         PHASE_ORDER.get(str(item.get("phase")), 99),
         1 if item.get("phase") == "detail" else 0,
         str(item.get("id") or ""),

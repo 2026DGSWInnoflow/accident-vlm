@@ -21,6 +21,7 @@ QUALITY_EVENT_SCAN_TOP_K = 5
 QUALITY_EVENT_SCAN_MIN_SCORE = 8.0
 QUALITY_PRECISION_EVENT_FPS = 15.0
 QUALITY_MIN_IMPACT_FRAMES = 5
+QUALITY_MAX_EVENT_CANDIDATES = 24
 DEFAULT_QWEN_MODEL_ID = os.getenv("ACCIDENT_VLM_QWEN_MODEL_ID", "/home/minsung0830/accident-vlm/models/Qwen3.6-27B")
 
 
@@ -63,3 +64,4 @@ class PipelineConfig(BaseModel):
     event_scan_min_score: float = Field(default=QUALITY_EVENT_SCAN_MIN_SCORE, ge=0)
     precision_event_fps: float = Field(default=QUALITY_PRECISION_EVENT_FPS, gt=0)
     min_impact_frames: int = Field(default=QUALITY_MIN_IMPACT_FRAMES, gt=0)
+    max_event_candidates: int = Field(default=QUALITY_MAX_EVENT_CANDIDATES, gt=0)

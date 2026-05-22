@@ -7,9 +7,20 @@ from accident_vlm.modules.vlm_storyboard import build_vlm_storyboard
 from accident_vlm.schemas.preprocessing import PipelineContext
 
 
+MAX_EVIDENCE_IMAGES = 160
+PURPOSE_EVIDENCE_CAPS = {
+    "traffic_light_crop": 12,
+    "sign_crop": 8,
+    "ocr_roi": 24,
+    "actor_crop": 40,
+    "tracking_overlay": 24,
+    "track_overlay": 24,
+}
+
+
 def build_evidence_package(context: PipelineContext) -> dict:
     metadata = context.video_metadata.model_dump() if context.video_metadata else {}
-    evidence_images = rank_evidence_images(collect_evidence_images(context))
+    evidence_images = _cap_evidence_images(rank_evidence_images(collect_evidence_images(context)))
     context.evidence_images = deepcopy(evidence_images)
     package = {
         "frames": [frame.model_dump() for frame in context.selected_frames],
@@ -67,6 +78,22 @@ def collect_evidence_images(context: PipelineContext) -> list[dict]:
     _walk_nested_images(records, seen_paths, context.road_geometry, source="road_geometry")
     _walk_nested_images(records, seen_paths, context.traffic_control, source="traffic_control")
     return records
+
+
+def _cap_evidence_images(records: list[dict]) -> list[dict]:
+    capped: list[dict] = []
+    purpose_counts: dict[str, int] = {}
+    for record in records:
+        purpose = str(record.get("purpose") or "")
+        purpose_count = purpose_counts.get(purpose, 0)
+        purpose_limit = PURPOSE_EVIDENCE_CAPS.get(purpose)
+        if purpose_limit is not None and purpose_count >= purpose_limit:
+            continue
+        capped.append(record)
+        purpose_counts[purpose] = purpose_count + 1
+        if len(capped) >= MAX_EVIDENCE_IMAGES:
+            break
+    return capped
 
 
 def _walk_nested_images(records: list[dict], seen_paths: set[str], value: Any, source: str) -> None:

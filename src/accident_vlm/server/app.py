@@ -8,6 +8,7 @@ from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadF
 from accident_vlm.config import (
     DEFAULT_QWEN_MODEL_ID,
     QUALITY_MAX_MOTION_KEYFRAMES,
+    QUALITY_MAX_EVENT_CANDIDATES,
     QUALITY_MAX_SELECTED_FRAMES,
     QUALITY_MAX_SEGMENT_TRACKING_FRAMES,
     QUALITY_MIN_MOTION_CHANGE_SCORE,
@@ -79,6 +80,7 @@ def create_app(job_root: Path = Path("outputs/api_jobs")) -> FastAPI:
         segment_tracking_stride_frames: int = Form(QUALITY_SEGMENT_TRACKING_STRIDE_FRAMES),
         max_segment_tracking_frames: int = Form(QUALITY_MAX_SEGMENT_TRACKING_FRAMES),
         vlm_frame_budget: int = Form(QUALITY_VLM_FRAME_BUDGET),
+        max_event_candidates: int = Form(QUALITY_MAX_EVENT_CANDIDATES),
         lane_width_m: float = Form(3.2),
     ) -> JobCreatedResponse:
         options = AnalysisOptions(
@@ -100,6 +102,7 @@ def create_app(job_root: Path = Path("outputs/api_jobs")) -> FastAPI:
             segment_tracking_stride_frames=segment_tracking_stride_frames,
             max_segment_tracking_frames=max_segment_tracking_frames,
             vlm_frame_budget=vlm_frame_budget,
+            max_event_candidates=max_event_candidates,
             lane_width_m=lane_width_m,
         )
         record = job_store.create(options.mode, Path(file.filename or "upload.mp4"))

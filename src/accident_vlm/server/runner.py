@@ -26,6 +26,7 @@ def config_from_options(options: AnalysisOptions, output_dir: Path) -> PipelineC
         segment_tracking_stride_frames=options.segment_tracking_stride_frames,
         max_segment_tracking_frames=options.max_segment_tracking_frames,
         vlm_frame_budget=options.vlm_frame_budget,
+        max_event_candidates=options.max_event_candidates,
         lane_width_m=options.lane_width_m,
         ocr_backend=options.ocr_backend,
         object_detector_backend=options.object_detector_backend,
@@ -48,11 +49,18 @@ def run_analysis_job(
     final_output_path = output_dir / "accident_facts.json"
 
     try:
+        job_store.set_progress(job_id, stage="preprocessing", progress_message="pre-vlm analysis running")
         config = config_from_options(options, output_dir)
         context = analyze_video_pre_vlm(video_path=video_path, config=config)
         pre_vlm_output_path.write_text(
             json.dumps(context.model_dump(), ensure_ascii=False, indent=2),
             encoding="utf-8",
+        )
+        job_store.set_progress(
+            job_id,
+            stage="vlm_composition" if options.mode == AnalysisMode.FULL else "pre_vlm_complete",
+            progress_message="pre-vlm context written",
+            pre_vlm_output_path=pre_vlm_output_path,
         )
 
         final_path: Path | None = None
@@ -61,6 +69,12 @@ def run_analysis_job(
             final_facts = compose_final_facts(context, backend)
             write_final_facts(final_facts, final_output_path)
             final_path = final_output_path
+            job_store.set_progress(
+                job_id,
+                stage="writing_result",
+                progress_message="final VLM facts written",
+                final_output_path=final_path,
+            )
 
         job_store.set_succeeded(job_id, pre_vlm_output_path, final_path)
     except Exception as exc:  # noqa: BLE001

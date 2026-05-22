@@ -160,3 +160,57 @@ def test_build_vlm_storyboard_preserves_insurance_context_against_actor_crops():
     insurance_items = [item for item in storyboard if item["phase"] == "insurance_context"]
     assert {item["id"] for item in insurance_items} == {"lane", "signal"}
     assert all("보험" in item["role"] for item in insurance_items)
+
+
+def test_build_vlm_storyboard_does_not_front_load_untimed_signal_crops():
+    evidence_package = {
+        "evidence_images": [
+            {
+                "id": f"signal_{index}",
+                "path": f"/tmp/signal_{index}.jpg",
+                "purpose": "traffic_light_crop",
+                "importance_score": 100 - index,
+            }
+            for index in range(12)
+        ]
+        + [
+            {
+                "id": "scene",
+                "path": "/tmp/scene.jpg",
+                "frame_id": "frame_001",
+                "time": "00:01.000",
+                "purpose": "event_window_context",
+                "importance_score": 70,
+            },
+            {
+                "id": "pre",
+                "path": "/tmp/pre.jpg",
+                "frame_id": "frame_002",
+                "time": "00:02.000",
+                "purpose": "pre_impact",
+                "importance_score": 80,
+            },
+            {
+                "id": "impact",
+                "path": "/tmp/impact.jpg",
+                "frame_id": "frame_003",
+                "time": "00:03.000",
+                "purpose": "impact_candidate",
+                "importance_score": 90,
+            },
+            {
+                "id": "post",
+                "path": "/tmp/post.jpg",
+                "frame_id": "frame_004",
+                "time": "00:04.000",
+                "purpose": "post_impact",
+                "importance_score": 75,
+            },
+        ],
+        "precomputed_facts": {},
+    }
+
+    storyboard = build_vlm_storyboard(evidence_package, max_items=10)
+
+    assert [item["id"] for item in storyboard[:4]] == ["scene", "pre", "impact", "post"]
+    assert sum(item["purpose"] == "traffic_light_crop" for item in storyboard) <= 3

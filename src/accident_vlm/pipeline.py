@@ -187,9 +187,9 @@ def analyze_video_pre_vlm(
             context.input_quality.model_dump() if context.input_quality else None,
             context.event_scan_candidates,
         )
-        context.event_candidates = sorted(
+        context.event_candidates = _limit_event_candidates(
             [*detected_event_candidates, *context.event_scan_candidates],
-            key=lambda event: (-float(event.get("event_score", 0.0) or 0.0), event.get("time") or ""),
+            active_config.max_event_candidates,
         )
         context.selected_segments = build_event_segments(
             context.event_candidates,
@@ -279,3 +279,11 @@ def _collect_preprocessing_uncertainties(context: PipelineContext) -> list[str]:
         if item not in deduped:
             deduped.append(item)
     return deduped
+
+
+def _limit_event_candidates(event_candidates: list[dict], max_candidates: int) -> list[dict]:
+    ranked = sorted(
+        event_candidates,
+        key=lambda event: (-float(event.get("event_score", 0.0) or 0.0), event.get("time") or ""),
+    )
+    return ranked[:max_candidates]

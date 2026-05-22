@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from accident_vlm.config import (
     DEFAULT_QWEN_MODEL_ID,
     QUALITY_MAX_MOTION_KEYFRAMES,
+    QUALITY_MAX_EVENT_CANDIDATES,
     QUALITY_MAX_SELECTED_FRAMES,
     QUALITY_MAX_SEGMENT_TRACKING_FRAMES,
     QUALITY_MIN_MOTION_CHANGE_SCORE,
@@ -54,6 +55,7 @@ class AnalysisOptions(BaseModel):
     segment_tracking_stride_frames: int = Field(default=QUALITY_SEGMENT_TRACKING_STRIDE_FRAMES, gt=0)
     max_segment_tracking_frames: int = Field(default=QUALITY_MAX_SEGMENT_TRACKING_FRAMES, gt=0)
     vlm_frame_budget: int = Field(default=QUALITY_VLM_FRAME_BUDGET, gt=0)
+    max_event_candidates: int = Field(default=QUALITY_MAX_EVENT_CANDIDATES, gt=0)
     lane_width_m: float = Field(default=3.2, gt=0)
 
 
@@ -72,6 +74,8 @@ class JobRecord(BaseModel):
     output_dir: str
     pre_vlm_output_path: str | None = None
     final_output_path: str | None = None
+    stage: str | None = None
+    progress_message: str | None = None
     error: str | None = None
 
 

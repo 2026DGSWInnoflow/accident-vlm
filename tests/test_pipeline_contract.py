@@ -111,6 +111,57 @@ def test_build_evidence_package_is_snapshot_of_mutable_context_fields() -> None:
     assert all("phase" in item for item in evidence_package["vlm_storyboard"])
 
 
+def test_build_evidence_package_caps_repetitive_roi_and_signal_images() -> None:
+    context = PipelineContext(
+        video_path="sample.mp4",
+        video_metadata=VideoMetadata(
+            duration_sec=10.0,
+            fps=15,
+            resolution="640x480",
+            frame_count=150,
+            has_audio=False,
+        ),
+        selected_frames=[
+            SelectedFrame(
+                id=f"frame_{index:06d}",
+                time=f"00:{index:02d}.000",
+                frame_index=index * 15,
+                path=f"/tmp/frame_{index:06d}.jpg",
+                purpose="event_window_context",
+            )
+            for index in range(8)
+        ],
+        ocr_observations=[
+            {
+                "id": f"ocr_{index}",
+                "frame_id": f"frame_{index % 8:06d}",
+                "image_path": f"/tmp/ocr_{index}.jpg",
+            }
+            for index in range(80)
+        ],
+        traffic_control={
+            "signal": {
+                "crops": [
+                    {
+                        "id": f"signal_{index}",
+                        "path": f"/tmp/signal_{index}.jpg",
+                        "purpose": "traffic_light_crop",
+                    }
+                    for index in range(80)
+                ]
+            }
+        },
+    )
+
+    evidence_package = build_evidence_package(context)
+    purposes = [image["purpose"] for image in evidence_package["evidence_images"]]
+
+    assert len(evidence_package["evidence_images"]) <= 160
+    assert purposes.count("traffic_light_crop") <= 12
+    assert purposes.count("ocr_roi") <= 24
+    assert purposes.count("event_window_context") == 8
+
+
 def test_analyze_video_pre_vlm_merges_motion_keyframes_before_extraction(
     tmp_path, monkeypatch
 ) -> None:
@@ -254,6 +305,87 @@ def test_analyze_video_pre_vlm_connects_event_scan_candidates(tmp_path, monkeypa
     )
     assert context.evidence_package["precomputed_facts"]["event_scan_candidates"]
     assert context.evidence_package["precomputed_facts"]["rejected_frame_candidates"]
+
+
+def test_analyze_video_pre_vlm_limits_event_candidates_before_segments(tmp_path, monkeypatch) -> None:
+    captured = {}
+
+    monkeypatch.setattr(
+        "accident_vlm.pipeline.probe_video",
+        lambda video_path: VideoMetadata(
+            duration_sec=10.0,
+            fps=15,
+            resolution="640x480",
+            frame_count=150,
+            has_audio=False,
+        ),
+    )
+
+    def fake_extract_selected_frames(video_path, selected_frames, output_dir):
+        return [frame.model_copy(update={"path": str(tmp_path / f"{frame.id}.jpg")}) for frame in selected_frames]
+
+    monkeypatch.setattr("accident_vlm.pipeline.extract_selected_frames", fake_extract_selected_frames)
+    monkeypatch.setattr("accident_vlm.pipeline.select_motion_keyframes", lambda *args, **kwargs: [])
+    monkeypatch.setattr("accident_vlm.pipeline.scan_video_event_candidates", lambda *args, **kwargs: [])
+    monkeypatch.setattr("accident_vlm.pipeline.select_precision_event_frames", lambda *args, **kwargs: ([], []))
+    monkeypatch.setattr("accident_vlm.pipeline.analyze_input_quality", lambda *args, **kwargs: None)
+    monkeypatch.setattr("accident_vlm.pipeline.create_ocr_backend", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("accident_vlm.pipeline.extract_ocr_observations", lambda *args, **kwargs: [])
+    monkeypatch.setattr("accident_vlm.pipeline.summarize_ocr_observations", lambda *_args: {})
+    monkeypatch.setattr("accident_vlm.pipeline.create_object_detector", lambda *args, **kwargs: None)
+    monkeypatch.setattr("accident_vlm.pipeline.detect_and_track_actors", lambda *args, **kwargs: [])
+    monkeypatch.setattr("accident_vlm.pipeline.build_visual_evidence", lambda *args, **kwargs: ([], []))
+    monkeypatch.setattr("accident_vlm.pipeline.analyze_road_geometry", lambda *args, **kwargs: {})
+    monkeypatch.setattr("accident_vlm.pipeline.estimate_speed_and_distance", lambda *args, **kwargs: {})
+    monkeypatch.setattr("accident_vlm.pipeline.analyze_traffic_control", lambda *args, **kwargs: {})
+    monkeypatch.setattr("accident_vlm.pipeline.classify_scene_candidates", lambda *args, **kwargs: [])
+    monkeypatch.setattr(
+        "accident_vlm.pipeline.detect_event_candidates",
+        lambda *args, **kwargs: [
+            {
+                "time": f"00:{index % 10:02d}.000",
+                "event_type": "candidate",
+                "event_score": 200 - index,
+                "confidence": "medium",
+            }
+            for index in range(80)
+        ],
+    )
+
+    def fake_build_event_segments(event_candidates, *args, **kwargs):
+        captured["event_count"] = len(event_candidates)
+        return [{"id": f"seg_{index}"} for index, _event in enumerate(event_candidates)]
+
+    monkeypatch.setattr("accident_vlm.pipeline.build_event_segments", fake_build_event_segments)
+    monkeypatch.setattr("accident_vlm.pipeline.detect_and_track_segments", lambda *args, **kwargs: [])
+    monkeypatch.setattr("accident_vlm.pipeline.build_event_evidence_overlays", lambda *args, **kwargs: [])
+    monkeypatch.setattr("accident_vlm.pipeline.select_event_window_frames", lambda *args, **kwargs: [])
+    monkeypatch.setattr(
+        "accident_vlm.pipeline.build_frame_selection_contact_sheet",
+        lambda frames, output_path, title: {"status": "skipped"},
+    )
+
+    context = analyze_video_pre_vlm(
+        tmp_path / "sample.mp4",
+        PipelineConfig(
+            output_dir=tmp_path / "outputs",
+            enable_event_scan=True,
+            enable_motion_keyframes=True,
+            enable_ocr=False,
+            enable_actor_tracking=True,
+            enable_segment_tracking=True,
+            enable_road_geometry=False,
+            enable_speed_distance=False,
+            enable_traffic_control=False,
+            enable_scene_analysis=False,
+            enable_event_detection=True,
+            max_event_candidates=24,
+        ),
+    )
+
+    assert captured["event_count"] == 24
+    assert len(context.event_candidates) == 24
+    assert len(context.selected_segments) == 24
 
 
 def test_consolidate_tracks_adds_track_quality_without_misreading_segment_ids() -> None:
