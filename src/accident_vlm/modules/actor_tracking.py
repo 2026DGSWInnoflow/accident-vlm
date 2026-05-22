@@ -21,6 +21,26 @@ SUPPORTED_ACTOR_LABELS = {
     "person": "보행자",
 }
 
+ACCIDENT_ACTOR_TAXONOMY = {
+    "passenger_car": {"korean_label": "승용차", "source": "custom_accident_taxonomy"},
+    "truck": {"korean_label": "화물차", "source": "custom_accident_taxonomy"},
+    "bus": {"korean_label": "버스", "source": "custom_accident_taxonomy"},
+    "motorcycle": {"korean_label": "이륜차", "source": "custom_accident_taxonomy"},
+    "bicycle": {"korean_label": "자전거", "source": "custom_accident_taxonomy"},
+    "pedestrian": {"korean_label": "보행자", "source": "custom_accident_taxonomy"},
+    "kickboard": {"korean_label": "전동킥보드", "source": "custom_accident_taxonomy"},
+    "traffic_light": {"korean_label": "신호등", "source": "custom_accident_taxonomy"},
+    "left_turn_signal": {"korean_label": "좌회전신호", "source": "custom_accident_taxonomy"},
+    "speed_limit_sign": {"korean_label": "제한속도표지", "source": "custom_accident_taxonomy"},
+    "stop_sign": {"korean_label": "정지표지", "source": "custom_accident_taxonomy"},
+    "crosswalk": {"korean_label": "횡단보도", "source": "custom_accident_taxonomy"},
+    "lane": {"korean_label": "차선", "source": "custom_accident_taxonomy"},
+    "stop_line": {"korean_label": "정지선", "source": "custom_accident_taxonomy"},
+    "centerline": {"korean_label": "중앙선", "source": "custom_accident_taxonomy"},
+}
+
+COCO_PRETRAINED_CLASSES = {"승용차", "화물차", "버스", "이륜차", "자전거", "보행자"}
+
 
 @dataclass(frozen=True)
 class Detection:
@@ -137,6 +157,20 @@ def create_object_detector(backend: str, model_name: str) -> ObjectDetector:
     return NoObjectDetector()
 
 
+def detector_profile(model_name: str, backend: str) -> dict:
+    custom_traffic_model = any(token in model_name.lower() for token in ("custom", "traffic", "accident"))
+    return {
+        "backend": backend,
+        "model_name": model_name,
+        "base_model_family": "custom_accident_traffic" if custom_traffic_model else "coco_pretrained",
+        "custom_traffic_model": custom_traffic_model,
+        "coco_supported_classes": sorted(COCO_PRETRAINED_CLASSES),
+        "custom_taxonomy_classes": [
+            value["korean_label"] for value in ACCIDENT_ACTOR_TAXONOMY.values()
+        ],
+    }
+
+
 def _center(bbox: list[int]) -> tuple[float, float]:
     return ((bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2)
 
@@ -211,6 +245,7 @@ def detect_and_track_actors(
                     "role_candidate": "상대 차량" if detection.label != "보행자" else "보행자",
                     "positions": [],
                     "confidence": "medium",
+                    "uncertainty_reasons": [],
                     "source": detector.name,
                     "tracking_method": "detector_track_id" if detection.track_id else "center_distance",
                 }
@@ -228,6 +263,7 @@ def detect_and_track_actors(
                     "relative_position": _relative_position(center[0], center[1], width, height),
                 }
             )
+            _update_track_confidence(tracks[candidate_index])
 
     for track in tracks:
         positions = track["positions"]
@@ -244,6 +280,40 @@ def detect_and_track_actors(
             track["relative_position_end"] = "확인불가"
             track["movement_candidate"] = "확인불가"
     return tracks
+
+
+def _update_track_confidence(track: dict) -> None:
+    confidences = [float(position.get("confidence") or 0.0) for position in track.get("positions", [])]
+    if not confidences:
+        track["confidence"] = "unknown"
+        return
+    mean_confidence = sum(confidences) / len(confidences)
+    if mean_confidence >= 0.7:
+        track["confidence"] = "high"
+    elif mean_confidence >= 0.35:
+        track["confidence"] = "medium"
+    else:
+        track["confidence"] = "low"
+        reasons = track.setdefault("uncertainty_reasons", [])
+        if "low_detector_confidence" not in reasons:
+            reasons.append("low_detector_confidence")
+
+
+def compare_tracker_outputs(bytetrack_tracks: list[dict], botsort_tracks: list[dict]) -> dict:
+    bytetrack_ids = {str(track.get("track_id")) for track in bytetrack_tracks if isinstance(track, dict)}
+    botsort_ids = {str(track.get("track_id")) for track in botsort_tracks if isinstance(track, dict)}
+    shared = sorted(bytetrack_ids & botsort_ids)
+    only_bytetrack = sorted(bytetrack_ids - botsort_ids)
+    only_botsort = sorted(botsort_ids - bytetrack_ids)
+    return {
+        "bytetrack_count": len(bytetrack_tracks),
+        "botsort_count": len(botsort_tracks),
+        "shared_track_ids": shared,
+        "only_bytetrack_track_ids": only_bytetrack,
+        "only_botsort_track_ids": only_botsort,
+        "disagreement_count": len(only_bytetrack) + len(only_botsort),
+        "method": "track_id_overlap_comparison",
+    }
 
 
 def detect_and_track_segments(

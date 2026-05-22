@@ -2,13 +2,19 @@ from pathlib import Path
 
 from accident_vlm.config import PipelineConfig
 from accident_vlm.modules.actor_tracking import (
+    compare_tracker_outputs,
     create_object_detector,
     detect_and_track_actors,
     detect_and_track_segments,
 )
 from accident_vlm.modules.evidence_builder import build_evidence_package
-from accident_vlm.modules.evidence_visuals import build_visual_evidence
+from accident_vlm.modules.evidence_visuals import build_event_evidence_overlays, build_visual_evidence
 from accident_vlm.modules.event_detection import detect_event_candidates
+from accident_vlm.modules.event_scan import (
+    build_frame_selection_contact_sheet,
+    scan_video_event_candidates,
+    select_precision_event_frames,
+)
 from accident_vlm.modules.frame_selection import (
     build_event_segments,
     extract_selected_frames,
@@ -73,6 +79,28 @@ def analyze_video_pre_vlm(
         )
         context.selected_frames = merge_selected_frames(context.selected_frames, motion_frames)
 
+    if active_config.enable_event_scan:
+        context.event_scan_candidates = scan_video_event_candidates(
+            video_path=video_path,
+            metadata=metadata,
+            sample_fps=active_config.event_scan_sample_fps,
+            top_k=active_config.event_scan_top_k,
+            min_score=active_config.event_scan_min_score,
+            pre_event_window_sec=active_config.pre_event_window_sec,
+            post_event_window_sec=active_config.post_event_window_sec,
+        )
+        precision_frames, rejected_frames = select_precision_event_frames(
+            context.event_scan_candidates,
+            metadata,
+            max_frames=active_config.vlm_frame_budget,
+            pre_event_window_sec=active_config.pre_event_window_sec,
+            post_event_window_sec=active_config.post_event_window_sec,
+            precision_fps=active_config.precision_event_fps,
+            min_impact_frames=active_config.min_impact_frames,
+        )
+        context.selected_frames = merge_selected_frames(context.selected_frames, precision_frames)
+        context.rejected_frame_candidates = rejected_frames
+
     run_output_dir = active_config.output_dir / Path(video_path).stem
     frame_output_dir = run_output_dir / active_config.frame_output_dirname
     context.selected_frames = extract_selected_frames(
@@ -81,7 +109,11 @@ def analyze_video_pre_vlm(
         output_dir=frame_output_dir,
     )
 
-    context.input_quality = analyze_input_quality(video_path, context.selected_frames)
+    context.input_quality = analyze_input_quality(
+        video_path,
+        context.selected_frames,
+        event_windows=context.event_scan_candidates,
+    )
 
     if active_config.enable_ocr:
         ocr_backend = create_ocr_backend(active_config.ocr_backend)
@@ -99,6 +131,19 @@ def analyze_video_pre_vlm(
         )
         context.tracks = detect_and_track_actors(context.selected_frames, detector)
         context.tracks = consolidate_tracks(context.tracks)
+        if active_config.enable_tracker_comparison:
+            alternate_backend = "botsort" if active_config.object_detector_backend != "botsort" else "bytetrack"
+            alternate_detector = create_object_detector(
+                alternate_backend,
+                active_config.object_detector_model,
+            )
+            alternate_tracks = consolidate_tracks(
+                detect_and_track_actors(context.selected_frames, alternate_detector)
+            )
+            if active_config.object_detector_backend == "botsort":
+                context.tracker_comparison = compare_tracker_outputs(alternate_tracks, context.tracks)
+            else:
+                context.tracker_comparison = compare_tracker_outputs(context.tracks, alternate_tracks)
         context.overlays, context.crops = build_visual_evidence(
             context.selected_frames,
             context.tracks,
@@ -110,6 +155,7 @@ def analyze_video_pre_vlm(
             context.selected_frames,
             lane_width_m=active_config.lane_width_m,
             output_dir=run_output_dir / "road_geometry",
+            lane_segmentation_model_path=active_config.lane_segmentation_model_path,
         )
 
     if active_config.enable_speed_distance:
@@ -135,10 +181,15 @@ def analyze_video_pre_vlm(
         )
 
     if active_config.enable_event_detection:
-        context.event_candidates = detect_event_candidates(
+        detected_event_candidates = detect_event_candidates(
             context.tracks,
             context.speed_and_distance,
             context.input_quality.model_dump() if context.input_quality else None,
+            context.event_scan_candidates,
+        )
+        context.event_candidates = sorted(
+            [*detected_event_candidates, *context.event_scan_candidates],
+            key=lambda event: (-float(event.get("event_score", 0.0) or 0.0), event.get("time") or ""),
         )
         context.selected_segments = build_event_segments(
             context.event_candidates,
@@ -166,6 +217,15 @@ def analyze_video_pre_vlm(
                 context.tracks,
                 run_output_dir,
             )
+        context.overlays.extend(
+            build_event_evidence_overlays(
+                context.selected_frames,
+                context.event_candidates,
+                context.tracks,
+                run_output_dir,
+            )
+        )
+        context.preprocessing_uncertainties = _collect_preprocessing_uncertainties(context)
         event_window_frames = select_event_window_frames(
             context.event_candidates,
             metadata,
@@ -179,5 +239,42 @@ def analyze_video_pre_vlm(
             output_dir=frame_output_dir,
         )
 
+    contact_sheet = build_frame_selection_contact_sheet(
+        context.selected_frames,
+        run_output_dir / "reports" / "frame_selection_contact_sheet.jpg",
+        title=f"{Path(video_path).name} frame selection",
+    )
+    if contact_sheet.get("status") == "created":
+        context.contact_sheets = [contact_sheet]
+
+    if not context.preprocessing_uncertainties:
+        context.preprocessing_uncertainties = _collect_preprocessing_uncertainties(context)
     context.evidence_package = build_evidence_package(context)
     return context
+
+
+def _collect_preprocessing_uncertainties(context: PipelineContext) -> list[str]:
+    uncertainties: list[str] = []
+    if context.input_quality and context.input_quality.analysis_reliability in {"low", "medium"}:
+        uncertainties.append(f"input_quality reliability={context.input_quality.analysis_reliability}")
+    for track in context.tracks:
+        if not isinstance(track, dict):
+            continue
+        if track.get("confidence") in {"low", "unknown"}:
+            uncertainties.append(f"low confidence actor retained: {track.get('track_id', 'unknown')}")
+        for reason in track.get("uncertainty_reasons", []):
+            uncertainties.append(f"actor {track.get('track_id', 'unknown')}: {reason}")
+    for event in context.event_candidates:
+        if not isinstance(event, dict):
+            continue
+        if event.get("confidence") in {"low", "unknown"}:
+            uncertainties.append(f"low confidence event candidate retained: {event.get('event_type', 'unknown')}")
+    if context.tracker_comparison.get("disagreement_count"):
+        uncertainties.append(
+            f"tracker disagreement count={context.tracker_comparison.get('disagreement_count')}"
+        )
+    deduped = []
+    for item in uncertainties:
+        if item not in deduped:
+            deduped.append(item)
+    return deduped

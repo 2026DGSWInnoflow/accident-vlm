@@ -13,7 +13,11 @@ from typing import Any, Protocol
 
 from accident_vlm.config import PipelineConfig
 from accident_vlm.modules.fact_verifier import verify_vlm_payload_against_context
-from accident_vlm.modules.schema_guard import validate_final_output
+from accident_vlm.modules.schema_guard import (
+    ACCIDENT_TYPE_CANDIDATE_DEFAULTS,
+    INSURANCE_CLAIM_FIELD_DEFAULTS,
+    validate_final_output,
+)
 from accident_vlm.schemas.final_output import AccidentFactOutput
 from accident_vlm.schemas.preprocessing import PipelineContext
 
@@ -24,6 +28,36 @@ Do not determine fault ratio, legal violation, negligence, offender, or victim.
 Mark unsupported fields as 확인불가.
 Every important event must include confidence and evidence.
 Return a single valid JSON object. Do not include markdown, prose, or reasoning.
+""".strip()
+
+STORYBOARD_PROMPT = """
+You are analyzing a short accident-video storyboard, not unrelated still images.
+Read storyboard images in slot order and compare changes over time.
+
+Required analysis discipline:
+1. Build a frame-by-frame observation list before writing final facts.
+2. Track whether the same actor appears across frames; do not assume identity if uncertain.
+3. Check all accident hypotheses before setting accident_type:
+   - 차대보행자
+   - 차대차
+   - 차대이륜차
+   - 차대자전거
+   - 차대시설물
+   - 단독사고
+   - 비접촉사고
+   - 확인불가
+4. If a person/pedestrian is visible in any storyboard image, crop, overlay, or precomputed hint,
+   do not omit that actor. If uncertain, include it as a candidate with low confidence.
+5. If a vehicle, motorcycle, bicycle, kickboard, pedestrian, sign, signal, lane, or impact clue is
+   visible only in a crop or overlay, cite that crop/overlay id and keep confidence conservative.
+6. Use precomputed hints only as candidates. Confirmed facts must cite visible storyboard evidence.
+7. Put unsupported but relevant possibilities in uncertainties or rag_hints.scenario_keywords.
+8. Every actor, timeline event, collision claim, traffic control claim, and accident_type candidate
+   should cite exact storyboard slot/frame_id/crop_id evidence.
+9. Always fill insurance_claim_fields and accident_type_candidates. Use 확인불가/unknown when not visible.
+   Insurance claim fields must focus on objective claim-writing facts: accident_datetime,
+   location, road_shape, lane_count, ego_direction, other_direction, damage_parts,
+   and police_report_visible. Do not invent location or time if OCR/GPS/metadata is absent.
 """.strip()
 
 
@@ -51,6 +85,8 @@ OUTPUT_TEMPLATE = {
     "timeline": [],
     "collision": {},
     "speed_and_distance": {},
+    "insurance_claim_fields": INSURANCE_CLAIM_FIELD_DEFAULTS,
+    "accident_type_candidates": ACCIDENT_TYPE_CANDIDATE_DEFAULTS,
     "uncertainties": [],
     "evidence_index": {},
     "rag_hints": {
@@ -63,6 +99,7 @@ OUTPUT_TEMPLATE = {
 
 def build_vlm_prompt(context: PipelineContext, compact: bool = False) -> str:
     evidence_package = _compact_evidence_package(context.evidence_package) if compact else context.evidence_package
+    storyboard = evidence_package.get("vlm_storyboard", [])
     evidence_package_json = json.dumps(
         evidence_package,
         ensure_ascii=False,
@@ -72,16 +109,25 @@ def build_vlm_prompt(context: PipelineContext, compact: bool = False) -> str:
     evidence_heading = "Compact evidence package" if compact else "Evidence package"
     return (
         f"{SYSTEM_PROMPT}\n\n"
+        f"{STORYBOARD_PROMPT}\n\n"
         "Return only JSON matching this exact shape. Keep enum-like values in Korean "
         "when they are visible; use 확인불가/unknown when unsupported.\n"
+        "In evidence_index, include storyboard_observations and candidate_checks when useful.\n"
         f"{json.dumps(OUTPUT_TEMPLATE, ensure_ascii=False, indent=2)}\n\n"
+        "VLM evidence storyboard:\n"
+        f"{json.dumps(_compact_storyboard(storyboard), ensure_ascii=False, indent=2)}\n\n"
         f"{evidence_heading}:\n"
         f"{evidence_package_json}"
     )
 
 
 class VLMBackend(Protocol):
-    def generate_json(self, prompt: str, image_paths: list[str]) -> dict[str, Any]:
+    def generate_json(
+        self,
+        prompt: str,
+        image_paths: list[str],
+        image_records: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         ...
 
 
@@ -92,8 +138,9 @@ def compose_with_backend(
     compact_prompt: bool = False,
 ) -> dict[str, Any]:
     prompt = build_vlm_prompt(context, compact=compact_prompt)
-    image_paths = _collect_evidence_image_paths(context.evidence_package, max_images=image_limit)
-    return backend.generate_json(prompt=prompt, image_paths=image_paths)
+    image_records = _collect_evidence_image_records(context.evidence_package, max_images=image_limit)
+    image_paths = [str(record["path"]) for record in image_records if record.get("path")]
+    return backend.generate_json(prompt=prompt, image_paths=image_paths, image_records=image_records)
 
 
 def compose_with_retry(
@@ -166,9 +213,11 @@ def _compact_evidence_package(evidence_package: dict[str, Any]) -> dict[str, Any
     compact_facts = {
         "metadata": facts.get("metadata", {}),
         "input_quality": facts.get("input_quality", {}),
+        "preprocessing_uncertainties": _limit_list(facts.get("preprocessing_uncertainties", []), 20),
         "ocr_summary": facts.get("ocr_summary", {}),
         "scene_type_candidates": _limit_list(facts.get("scene_type_candidates", []), 5),
         "tracks": [_compact_track(track) for track in _limit_list(facts.get("tracks", []), 8)],
+        "tracker_comparison": facts.get("tracker_comparison", {}),
         "road_geometry": facts.get("road_geometry", {}),
         "speed_estimates": facts.get("speed_estimates", {}),
         "traffic_control": facts.get("traffic_control", {}),
@@ -176,6 +225,7 @@ def _compact_evidence_package(evidence_package: dict[str, Any]) -> dict[str, Any
         "evidence_summary": facts.get("evidence_summary", {}),
     }
     return {
+        "vlm_storyboard": _compact_storyboard(evidence_package.get("vlm_storyboard", [])),
         "frames": _compact_image_records(evidence_package.get("frames", []), 20),
         "selected_segments": _limit_list(evidence_package.get("selected_segments", []), 8),
         "overlays": _compact_image_records(evidence_package.get("overlays", []), 8),
@@ -183,6 +233,33 @@ def _compact_evidence_package(evidence_package: dict[str, Any]) -> dict[str, Any
         "evidence_images": _compact_image_records(evidence_package.get("evidence_images", []), 20),
         "precomputed_facts": compact_facts,
     }
+
+
+def _compact_storyboard(value: Any) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for item in _limit_list(value, 24):
+        if not isinstance(item, dict):
+            continue
+        record = {
+            key: item.get(key)
+            for key in (
+                "slot",
+                "id",
+                "frame_id",
+                "time",
+                "phase",
+                "role",
+                "purpose",
+                "source",
+                "track_id",
+                "linked_actor_ids",
+                "why_selected",
+                "precomputed_hints",
+            )
+            if item.get(key) is not None
+        }
+        records.append(record)
+    return records
 
 
 def _limit_list(value: Any, limit: int) -> list[Any]:
@@ -277,13 +354,41 @@ def _clear_cuda_cache() -> None:
 
 
 def _collect_evidence_image_paths(evidence_package: dict[str, Any], max_images: int | None = None) -> list[str]:
+    return [
+        str(record["path"])
+        for record in _collect_evidence_image_records(evidence_package, max_images=max_images)
+        if record.get("path")
+    ]
+
+
+def _collect_evidence_image_records(
+    evidence_package: dict[str, Any],
+    max_images: int | None = None,
+) -> list[dict[str, Any]]:
     explicit_limit = max_images is not None
     if max_images is None:
         max_images = int(os.getenv("ACCIDENT_VLM_MAX_IMAGES", "20"))
     elif max_images <= 0:
         return []
 
-    weighted_paths: list[tuple[int, str]] = []
+    storyboard = evidence_package.get("vlm_storyboard", [])
+    if isinstance(storyboard, list) and storyboard:
+        selected: list[dict[str, Any]] = []
+        seen_paths: set[str] = set()
+        for item in sorted(
+            [item for item in storyboard if isinstance(item, dict) and item.get("path")],
+            key=lambda record: int(record.get("slot", 9999) or 9999),
+        ):
+            path = str(item["path"])
+            if path in seen_paths:
+                continue
+            seen_paths.add(path)
+            selected.append(item)
+            if max_images > 0 and len(selected) >= max_images:
+                break
+        return selected
+
+    weighted_records: list[tuple[int, dict[str, Any]]] = []
     for section in ("evidence_images", "crops", "overlays", "frames"):
         for item in evidence_package.get(section, []):
             if not isinstance(item, dict) or not item.get("path"):
@@ -292,17 +397,20 @@ def _collect_evidence_image_paths(evidence_package: dict[str, Any], max_images: 
             priority = _image_priority(section, purpose)
             if item.get("importance_score") is not None:
                 priority -= int(item["importance_score"])
-            weighted_paths.append((priority, item["path"]))
+            weighted_records.append((priority, item))
 
-    image_paths: list[str] = []
-    for _, path in sorted(weighted_paths, key=lambda entry: entry[0]):
-        if path not in image_paths:
-            image_paths.append(path)
-        if max_images > 0 and len(image_paths) >= max_images:
+    image_records: list[dict[str, Any]] = []
+    seen_paths: set[str] = set()
+    for _, record in sorted(weighted_records, key=lambda entry: entry[0]):
+        path = str(record["path"])
+        if path not in seen_paths:
+            seen_paths.add(path)
+            image_records.append(record)
+        if max_images > 0 and len(image_records) >= max_images:
             break
-        if explicit_limit and len(image_paths) >= max_images:
+        if explicit_limit and len(image_records) >= max_images:
             break
-    return image_paths
+    return image_records
 
 
 def _image_priority(section: str, purpose: str) -> int:
@@ -311,17 +419,22 @@ def _image_priority(section: str, purpose: str) -> int:
         "sign_crop": 1,
         "event_segment": 2,
         "impact_candidate": 2,
+        "event_scan_impact_candidate": 2,
         "pre_impact": 3,
+        "event_scan_pre_impact": 3,
         "actor_crop": 3,
         "track_overlay": 4,
         "tracking_overlay": 4,
         "post_impact": 5,
+        "event_scan_post_impact": 5,
         "bev_overlay": 5,
         "lane_segmentation_overlay": 6,
         "motion_keyframe": 7,
         "event_window_context": 7,
         "pre_context": 8,
+        "event_scan_pre_context": 8,
         "regular_context": 8,
+        "frame_selection_contact_sheet": 9,
     }
     section_weights = {
         "crops": 20,
@@ -406,18 +519,40 @@ class TransformersQwenBackend:
             )
         self._model.eval()
 
-    def generate_json(self, prompt: str, image_paths: list[str]) -> dict[str, Any]:
+    def generate_json(
+        self,
+        prompt: str,
+        image_paths: list[str],
+        image_records: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         images = [self._load_image(path) for path in image_paths]
         chunk_size = int(os.getenv("ACCIDENT_VLM_IMAGE_CHUNK_SIZE", "0"))
         if chunk_size > 0 and len(images) > chunk_size:
-            return self._generate_chunked_json(prompt, images, chunk_size)
-        return parse_json_response(self._generate_text(prompt, images, max_new_tokens=_final_max_new_tokens()))
+            return self._generate_chunked_json(prompt, images, image_paths, image_records or [], chunk_size)
+        return parse_json_response(
+            self._generate_text(
+                prompt,
+                images,
+                image_paths=image_paths,
+                max_new_tokens=_final_max_new_tokens(),
+                image_records=image_records,
+            )
+        )
 
-    def _generate_chunked_json(self, prompt: str, images: list[Any], chunk_size: int) -> dict[str, Any]:
+    def _generate_chunked_json(
+        self,
+        prompt: str,
+        images: list[Any],
+        image_paths: list[str],
+        image_records: list[dict[str, Any]],
+        chunk_size: int,
+    ) -> dict[str, Any]:
         chunk_summaries: list[dict[str, Any]] = []
         total_chunks = (len(images) + chunk_size - 1) // chunk_size
         for chunk_index, start in enumerate(range(0, len(images), chunk_size), start=1):
             chunk_images = images[start : start + chunk_size]
+            chunk_paths = image_paths[start : start + chunk_size]
+            chunk_records = _records_for_paths(chunk_paths, image_records)
             chunk_prompt = (
                 "Analyze only this evidence image chunk. Do not decide fault or legal liability. "
                 "Return concise Korean observations grounded only in visible evidence.\n"
@@ -432,7 +567,9 @@ class TransformersQwenBackend:
                     "observations": self._generate_text(
                         chunk_prompt,
                         chunk_images,
+                        image_paths=chunk_paths,
                         max_new_tokens=_chunk_max_new_tokens(),
+                        image_records=chunk_records,
                     ),
                 }
             )
@@ -440,14 +577,18 @@ class TransformersQwenBackend:
         final_prompt = _build_chunked_final_prompt(chunk_summaries)
         return parse_json_response(self._generate_text(final_prompt, [], max_new_tokens=_final_max_new_tokens()))
 
-    def _generate_text(self, prompt: str, images: list[Any], max_new_tokens: int | None = None) -> str:
+    def _generate_text(
+        self,
+        prompt: str,
+        images: list[Any],
+        image_paths: list[str] | None = None,
+        max_new_tokens: int | None = None,
+        image_records: list[dict[str, Any]] | None = None,
+    ) -> str:
         messages = [
             {
                 "role": "user",
-                "content": [
-                    *[{"type": "image", "image": image} for image in images],
-                    {"type": "text", "text": prompt},
-                ],
+                "content": build_qwen_interleaved_content(prompt, images, image_paths, image_records),
             }
         ]
         text = render_qwen_chat_template(self._processor, messages)
@@ -486,6 +627,93 @@ class TransformersQwenBackend:
         return image
 
 
+def build_interleaved_content(
+    prompt: str,
+    image_paths: list[str],
+    image_records_or_package: list[dict[str, Any]] | dict[str, Any] | None = None,
+    *,
+    encode_images: bool = False,
+) -> list[dict[str, Any]]:
+    records = _normalize_image_records_for_content(image_paths, image_records_or_package)
+    content: list[dict[str, Any]] = []
+    for index, path in enumerate(image_paths, start=1):
+        record = records.get(path, {})
+        content.append({"type": "text", "text": _storyboard_image_caption(index, path, record)})
+        content.append(
+            {
+                "type": "image_url",
+                "image_url": {"url": _image_data_url(path) if encode_images else path},
+            }
+        )
+    content.append({"type": "text", "text": prompt})
+    return content
+
+
+def build_qwen_interleaved_content(
+    prompt: str,
+    images: list[Any],
+    image_paths: list[str] | None = None,
+    image_records: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    if image_paths is None:
+        image_paths = [f"image_{index}" for index in range(1, len(images) + 1)]
+    records = _normalize_image_records_for_content(image_paths, image_records or [])
+    content: list[dict[str, Any]] = []
+    for index, image in enumerate(images, start=1):
+        path = image_paths[index - 1] if index - 1 < len(image_paths) else f"image_{index}"
+        record = records.get(path, {})
+        content.append({"type": "text", "text": _storyboard_image_caption(index, path, record)})
+        content.append({"type": "image", "image": image})
+    content.append({"type": "text", "text": prompt})
+    return content
+
+
+def _normalize_image_records_for_content(
+    image_paths: list[str],
+    image_records_or_package: list[dict[str, Any]] | dict[str, Any] | None,
+) -> dict[str, dict[str, Any]]:
+    if isinstance(image_records_or_package, dict):
+        records = image_records_or_package.get("vlm_storyboard", [])
+    else:
+        records = image_records_or_package or []
+    by_path = {
+        str(record.get("path")): record
+        for record in records
+        if isinstance(record, dict) and record.get("path")
+    }
+    return {path: by_path.get(path, {}) for path in image_paths}
+
+
+def _records_for_paths(image_paths: list[str], image_records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    by_path = {
+        str(record.get("path")): record
+        for record in image_records
+        if isinstance(record, dict) and record.get("path")
+    }
+    return [by_path[path] for path in image_paths if path in by_path]
+
+
+def _storyboard_image_caption(index: int, path: str, record: dict[str, Any]) -> str:
+    slot = int(record.get("slot", index) or index)
+    fields = [
+        f"Frame {slot:02d}",
+        f"time={record.get('time', 'unknown')}",
+        f"phase={record.get('phase', 'unknown')}",
+        f"id={record.get('id') or record.get('frame_id') or Path(path).stem}",
+        f"role={record.get('role', 'visible evidence')}",
+    ]
+    if record.get("why_selected"):
+        fields.append(f"why_selected={record['why_selected']}")
+    if record.get("linked_actor_ids"):
+        fields.append(f"linked_actor_ids={record['linked_actor_ids']}")
+    if record.get("precomputed_hints"):
+        fields.append(
+            "precomputed_hints="
+            + json.dumps(record["precomputed_hints"], ensure_ascii=False, sort_keys=True)
+        )
+    return "\n".join(fields)
+
+
 class OpenAICompatibleVLMBackend:
     def __init__(
         self,
@@ -499,19 +727,36 @@ class OpenAICompatibleVLMBackend:
         self.api_key = api_key
         self.timeout_sec = timeout_sec
 
-    def generate_json(self, prompt: str, image_paths: list[str]) -> dict[str, Any]:
+    def generate_json(
+        self,
+        prompt: str,
+        image_paths: list[str],
+        image_records: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         chunk_size = int(os.getenv("ACCIDENT_VLM_IMAGE_CHUNK_SIZE", "0"))
         if chunk_size > 0 and len(image_paths) > chunk_size:
-            return self._generate_chunked_json(prompt, image_paths, chunk_size)
+            return self._generate_chunked_json(prompt, image_paths, image_records or [], chunk_size)
         return parse_json_response(
-            self._generate_text(prompt, image_paths, max_tokens=_final_max_new_tokens())
+            self._generate_text(
+                prompt,
+                image_paths,
+                max_tokens=_final_max_new_tokens(),
+                image_records=image_records,
+            )
         )
 
-    def _generate_chunked_json(self, prompt: str, image_paths: list[str], chunk_size: int) -> dict[str, Any]:
+    def _generate_chunked_json(
+        self,
+        prompt: str,
+        image_paths: list[str],
+        image_records: list[dict[str, Any]],
+        chunk_size: int,
+    ) -> dict[str, Any]:
         chunk_summaries: list[dict[str, Any]] = []
         total_chunks = (len(image_paths) + chunk_size - 1) // chunk_size
         for chunk_index, start in enumerate(range(0, len(image_paths), chunk_size), start=1):
             chunk_paths = image_paths[start : start + chunk_size]
+            chunk_records = _records_for_paths(chunk_paths, image_records)
             chunk_prompt = (
                 "Analyze only this evidence image chunk. Do not decide fault or legal liability. "
                 "Return concise Korean observations grounded only in visible evidence.\n"
@@ -527,6 +772,7 @@ class OpenAICompatibleVLMBackend:
                         chunk_prompt,
                         chunk_paths,
                         max_tokens=_chunk_max_new_tokens(),
+                        image_records=chunk_records,
                     ),
                 }
             )
@@ -534,15 +780,19 @@ class OpenAICompatibleVLMBackend:
         final_prompt = _build_chunked_final_prompt(chunk_summaries)
         return parse_json_response(self._generate_text(final_prompt, [], max_tokens=_final_max_new_tokens()))
 
-    def _generate_text(self, prompt: str, image_paths: list[str], max_tokens: int) -> str:
-        content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
-        for path in image_paths:
-            content.append(
-                {
-                    "type": "image_url",
-                    "image_url": {"url": _image_data_url(path)},
-                }
-            )
+    def _generate_text(
+        self,
+        prompt: str,
+        image_paths: list[str],
+        max_tokens: int,
+        image_records: list[dict[str, Any]] | None = None,
+    ) -> str:
+        content = build_interleaved_content(
+            prompt,
+            image_paths,
+            image_records or [],
+            encode_images=True,
+        )
         payload = {
             "model": self.model_id,
             "messages": [{"role": "user", "content": content}],
@@ -568,12 +818,18 @@ class OpenAICompatibleVLMBackend:
         return text
 
 
-def _build_chunked_final_prompt(chunk_summaries: list[dict[str, Any]]) -> str:
-    return (
+def _build_chunked_final_prompt(
+    chunk_summaries: list[dict[str, Any]],
+    base_prompt: str | None = None,
+) -> str:
+    contract = base_prompt or (
         f"{SYSTEM_PROMPT}\n\n"
         "Return only JSON matching this exact shape. Keep enum-like values in Korean "
         "when they are visible; use 확인불가/unknown when unsupported.\n"
-        f"{json.dumps(OUTPUT_TEMPLATE, ensure_ascii=False, indent=2)}\n\n"
+        f"{json.dumps(OUTPUT_TEMPLATE, ensure_ascii=False, indent=2)}"
+    )
+    return (
+        f"{contract}\n\n"
         "The evidence images were analyzed in chunks to fit the model context. "
         "Use all chunk observations below as evidence and return the final JSON only.\n"
         f"{json.dumps(chunk_summaries, ensure_ascii=False, indent=2)}"

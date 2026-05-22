@@ -30,6 +30,129 @@ STATUS_SYNONYMS = {
     "확인불가": "unknown",
 }
 
+
+INSURANCE_CLAIM_FIELD_DEFAULTS = {
+    "accident_datetime": {
+        "value": "확인불가",
+        "status": "unknown",
+        "confidence": "unknown",
+        "source": [],
+        "evidence": [],
+        "note": "블랙박스 OCR/메타데이터에서 확인되지 않음",
+    },
+    "location": {
+        "value": "확인불가",
+        "status": "unknown",
+        "confidence": "unknown",
+        "source": [],
+        "evidence": [],
+        "note": "영상만으로 장소 특정 불가",
+    },
+    "road_shape": {
+        "value": "확인불가",
+        "status": "unknown",
+        "confidence": "unknown",
+        "source": [],
+        "evidence": [],
+    },
+    "lane_count": {
+        "value": "확인불가",
+        "status": "unknown",
+        "confidence": "unknown",
+        "source": [],
+        "evidence": [],
+    },
+    "ego_direction": {
+        "value": "확인불가",
+        "status": "unknown",
+        "confidence": "unknown",
+        "source": [],
+        "evidence": [],
+    },
+    "other_direction": {
+        "value": "확인불가",
+        "status": "unknown",
+        "confidence": "unknown",
+        "source": [],
+        "evidence": [],
+    },
+    "damage_parts": [],
+    "police_report_visible": {
+        "value": "확인불가",
+        "status": "unknown",
+        "confidence": "unknown",
+        "source": [],
+        "evidence": [],
+    },
+}
+
+ACCIDENT_TYPE_CANDIDATE_DEFAULTS = {
+    "vehicle_to_pedestrian": {
+        "label": "차대보행자",
+        "status": "unknown",
+        "confidence": "unknown",
+        "source": [],
+        "evidence": [],
+    },
+    "vehicle_to_vehicle": {
+        "label": "차대차",
+        "status": "unknown",
+        "confidence": "unknown",
+        "source": [],
+        "evidence": [],
+    },
+    "vehicle_to_motorcycle": {
+        "label": "차대이륜차",
+        "status": "unknown",
+        "confidence": "unknown",
+        "source": [],
+        "evidence": [],
+    },
+    "vehicle_to_bicycle": {
+        "label": "차대자전거",
+        "status": "unknown",
+        "confidence": "unknown",
+        "source": [],
+        "evidence": [],
+    },
+    "vehicle_to_kickboard": {
+        "label": "차대전동킥보드",
+        "status": "unknown",
+        "confidence": "unknown",
+        "source": [],
+        "evidence": [],
+    },
+    "vehicle_to_facility": {
+        "label": "차대시설물",
+        "status": "unknown",
+        "confidence": "unknown",
+        "source": [],
+        "evidence": [],
+    },
+    "single_vehicle": {
+        "label": "단독사고",
+        "status": "unknown",
+        "confidence": "unknown",
+        "source": [],
+        "evidence": [],
+    },
+    "non_contact": {
+        "label": "비접촉사고",
+        "status": "unknown",
+        "confidence": "unknown",
+        "source": [],
+        "evidence": [],
+    },
+    "multi_collision": {
+        "label": "다중추돌",
+        "status": "unknown",
+        "confidence": "unknown",
+        "source": [],
+        "evidence": [],
+    },
+}
+
+
 DEFAULT_PAYLOAD = {
     "schema_version": "accident_video_facts.v1",
     "input_quality": {},
@@ -46,6 +169,8 @@ DEFAULT_PAYLOAD = {
     "timeline": [],
     "collision": {},
     "speed_and_distance": {},
+    "insurance_claim_fields": deepcopy(INSURANCE_CLAIM_FIELD_DEFAULTS),
+    "accident_type_candidates": deepcopy(ACCIDENT_TYPE_CANDIDATE_DEFAULTS),
     "uncertainties": [],
     "evidence_index": {},
     "rag_hints": {"accident_type": "확인불가", "scenario_keywords": []},
@@ -90,6 +215,8 @@ def repair_and_constrain_payload(payload: dict) -> dict:
     _require_collision_evidence(repaired)
     _require_timeline_evidence(repaired)
     _require_actor_evidence(repaired)
+    _require_insurance_field_evidence(repaired)
+    _require_accident_type_candidate_evidence(repaired)
     return repaired
 
 
@@ -143,6 +270,21 @@ def _require_evidence_for_field(payload: dict, key: str) -> None:
         field["source"] = []
         field["evidence"] = []
         _append_uncertainty(payload, f"근거 없는 값이 확인불가로 조정됨: {key}")
+
+
+def _require_evidence_for_nested_field(payload: dict, field: dict, path: str) -> None:
+    status = field.get("status")
+    if status == "unknown":
+        return
+    if _has_evidence(field):
+        return
+    if "value" in field:
+        field["value"] = "확인불가"
+    field["status"] = "unknown"
+    field["confidence"] = "unknown"
+    field["source"] = []
+    field["evidence"] = []
+    _append_uncertainty(payload, f"근거 없는 값이 확인불가로 조정됨: {path}")
 
 
 def _append_uncertainty(payload: dict, message: str) -> None:
@@ -209,6 +351,33 @@ def _require_actor_evidence(payload: dict) -> None:
             actor["movement"] = "확인불가"
             actor["confidence"] = "unknown"
             _append_uncertainty(payload, f"근거 없는 값이 확인불가로 조정됨: actors[{index}].movement")
+
+
+def _require_insurance_field_evidence(payload: dict) -> None:
+    fields = payload.get("insurance_claim_fields")
+    if not isinstance(fields, dict):
+        payload["insurance_claim_fields"] = deepcopy(INSURANCE_CLAIM_FIELD_DEFAULTS)
+        return
+    _deep_update(fields, {key: value for key, value in INSURANCE_CLAIM_FIELD_DEFAULTS.items() if key not in fields})
+    for key, field in fields.items():
+        if not isinstance(field, dict):
+            continue
+        _require_evidence_for_nested_field(payload, field, f"insurance_claim_fields.{key}")
+
+
+def _require_accident_type_candidate_evidence(payload: dict) -> None:
+    candidates = payload.get("accident_type_candidates")
+    if not isinstance(candidates, dict):
+        payload["accident_type_candidates"] = deepcopy(ACCIDENT_TYPE_CANDIDATE_DEFAULTS)
+        return
+    _deep_update(
+        candidates,
+        {key: value for key, value in ACCIDENT_TYPE_CANDIDATE_DEFAULTS.items() if key not in candidates},
+    )
+    for key, candidate in candidates.items():
+        if not isinstance(candidate, dict):
+            continue
+        _require_evidence_for_nested_field(payload, candidate, f"accident_type_candidates.{key}")
 
 
 def _matched_spans(text: str) -> list[tuple[int, int, str]]:

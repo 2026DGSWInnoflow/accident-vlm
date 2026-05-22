@@ -53,6 +53,8 @@ def test_final_output_minimal_contract():
         "accident_type": AccidentType.VEHICLE_TO_VEHICLE,
         "scenario_keywords": [],
     }
+    assert output.insurance_claim_fields == {}
+    assert output.accident_type_candidates == {}
     assert output.objective_summary == "자차와 상대 차량의 접촉이 관찰됨."
 
 

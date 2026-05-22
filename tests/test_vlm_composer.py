@@ -3,6 +3,8 @@ import urllib.error
 
 from accident_vlm.modules.vlm_composer import (
     SYSTEM_PROMPT,
+    build_interleaved_content,
+    build_qwen_interleaved_content,
     build_vlm_prompt,
     compose_with_backend,
     compose_with_retry,
@@ -30,10 +32,12 @@ class RecordingBackend:
     def __init__(self) -> None:
         self.prompt = None
         self.image_paths = None
+        self.image_records = None
 
-    def generate_json(self, prompt: str, image_paths: list[str]) -> dict:
+    def generate_json(self, prompt: str, image_paths: list[str], image_records=None) -> dict:
         self.prompt = prompt
         self.image_paths = image_paths
+        self.image_records = image_records
         return {"schema_version": "accident_video_facts.v1"}
 
 
@@ -41,7 +45,7 @@ class FlakyBackend:
     def __init__(self) -> None:
         self.calls = 0
 
-    def generate_json(self, prompt: str, image_paths: list[str]) -> dict:
+    def generate_json(self, prompt: str, image_paths: list[str], image_records=None) -> dict:
         self.calls += 1
         if self.calls == 1:
             raise ValueError("bad json")
@@ -52,7 +56,7 @@ class OomThenRecordingBackend:
     def __init__(self) -> None:
         self.image_counts: list[int] = []
 
-    def generate_json(self, prompt: str, image_paths: list[str]) -> dict:
+    def generate_json(self, prompt: str, image_paths: list[str], image_records=None) -> dict:
         self.image_counts.append(len(image_paths))
         if len(self.image_counts) == 1:
             raise RuntimeError("CUDA out of memory. Tried to allocate 2.35 GiB.")
@@ -64,7 +68,7 @@ class OomUntilCompactBackend:
         self.image_counts: list[int] = []
         self.prompts: list[str] = []
 
-    def generate_json(self, prompt: str, image_paths: list[str]) -> dict:
+    def generate_json(self, prompt: str, image_paths: list[str], image_records=None) -> dict:
         self.image_counts.append(len(image_paths))
         self.prompts.append(prompt)
         if len(self.image_counts) < 3:
@@ -76,7 +80,7 @@ class WeightPackedBackend:
     def __init__(self) -> None:
         self.calls = 0
 
-    def generate_json(self, prompt: str, image_paths: list[str]) -> dict:
+    def generate_json(self, prompt: str, image_paths: list[str], image_records=None) -> dict:
         self.calls += 1
         raise KeyError("weight_packed")
 
@@ -176,6 +180,82 @@ def test_build_vlm_prompt_includes_output_template_contract() -> None:
     assert '"rag_hints"' in prompt
     assert '"objective_summary"' in prompt
     assert "Do not include markdown, prose, or reasoning" in prompt
+
+
+def test_build_vlm_prompt_includes_storyboard_and_generic_candidate_checks() -> None:
+    context = PipelineContext(
+        video_path="sample.mp4",
+        evidence_package={
+            "vlm_storyboard": [
+                {
+                    "slot": 1,
+                    "id": "frame_000001",
+                    "path": "/tmp/frame.jpg",
+                    "time": "00:01.000",
+                    "phase": "impact_candidate",
+                    "role": "충돌 후보 확인",
+                    "why_selected": "event candidate",
+                }
+            ],
+            "precomputed_facts": {},
+        },
+    )
+
+    prompt = build_vlm_prompt(context)
+
+    assert "VLM evidence storyboard" in prompt
+    assert "차대보행자" in prompt
+    assert "차대차" in prompt
+    assert "차대이륜차" in prompt
+    assert "단독사고" in prompt
+    assert "If a person/pedestrian is visible" in prompt
+    assert "insurance_claim_fields" in prompt
+    assert "accident_datetime" in prompt
+    assert "road_shape" in prompt
+    assert "lane_count" in prompt
+    assert "damage_parts" in prompt
+    assert "accident_type_candidates" in prompt
+
+
+def test_build_interleaved_content_places_storyboard_text_before_each_image():
+    evidence_package = {
+        "vlm_storyboard": [
+            {
+                "slot": 1,
+                "path": "/tmp/a.jpg",
+                "time": "00:01.000",
+                "phase": "scene_context",
+                "role": "도로 구조 확인",
+                "why_selected": "regular context",
+                "linked_actor_ids": ["T1"],
+                "precomputed_hints": {"visible_actor_candidates": ["승용차"]},
+            }
+        ]
+    }
+
+    content = build_interleaved_content("prompt", ["/tmp/a.jpg"], evidence_package)
+
+    assert content[0]["type"] == "text"
+    assert "Frame 01" in content[0]["text"]
+    assert "00:01.000" in content[0]["text"]
+    assert "scene_context" in content[0]["text"]
+    assert content[1]["type"] == "image_url"
+    assert content[-1] == {"type": "text", "text": "prompt"}
+
+
+def test_build_qwen_interleaved_content_places_caption_before_each_image():
+    content = build_qwen_interleaved_content(
+        "prompt",
+        ["image-a"],
+        ["a.jpg"],
+        [{"path": "a.jpg", "slot": 7, "time": "00:07.000", "phase": "insurance_context"}],
+    )
+
+    assert content[0]["type"] == "text"
+    assert "Frame 07" in content[0]["text"]
+    assert "insurance_context" in content[0]["text"]
+    assert content[1] == {"type": "image", "image": "image-a"}
+    assert content[-1] == {"type": "text", "text": "prompt"}
 
 
 def test_render_qwen_chat_template_disables_thinking() -> None:
@@ -352,27 +432,39 @@ def test_qwen_generate_json_chunks_images_without_dropping_evidence(monkeypatch)
     backend._load_image = lambda path: f"image:{path}"
     calls = []
 
-    def fake_generate_text(prompt: str, images, max_new_tokens=None):
-        calls.append((prompt, list(images or []), max_new_tokens))
+    image_records = [
+        {"path": name, "slot": index + 1, "time": f"00:0{index}.000", "phase": "approach"}
+        for index, name in enumerate(["a.jpg", "b.jpg", "c.jpg", "d.jpg", "e.jpg"])
+    ]
+    reversed_image_records = list(reversed(image_records))
+
+    def fake_generate_text(prompt: str, images, image_paths=None, max_new_tokens=None, image_records=None):
+        calls.append((prompt, list(images or []), max_new_tokens, image_records))
         if images:
             return f"chunk saw {len(images)} images"
         return '{"schema_version":"accident_video_facts.v1","objective_summary":"ok"}'
 
     backend._generate_text = fake_generate_text
 
-    result = backend.generate_json("full prompt", ["a.jpg", "b.jpg", "c.jpg", "d.jpg", "e.jpg"])
+    result = backend.generate_json(
+        "full prompt with verbose evidence package",
+        ["a.jpg", "b.jpg", "c.jpg", "d.jpg", "e.jpg"],
+        reversed_image_records,
+    )
 
     assert result["schema_version"] == "accident_video_facts.v1"
-    assert [images for _, images, _ in calls] == [
+    assert [images for _, images, _, _ in calls] == [
         ["image:a.jpg", "image:b.jpg"],
         ["image:c.jpg", "image:d.jpg"],
         ["image:e.jpg"],
         [],
     ]
-    assert [tokens for _, _, tokens in calls] == [128, 128, 128, 512]
+    assert [tokens for _, _, tokens, _ in calls] == [128, 128, 128, 512]
+    assert calls[0][3] == image_records[:2]
     assert "chunk saw 2 images" in calls[-1][0]
-    assert "full prompt" not in calls[-1][0]
-    assert "Return only JSON" in calls[-1][0]
+    assert "full prompt with verbose evidence package" not in calls[-1][0]
+    assert "insurance_claim_fields" in calls[-1][0]
+    assert "Use all chunk observations below as evidence" in calls[-1][0]
 
 
 def test_image_data_url_encodes_local_image(tmp_path) -> None:
@@ -434,8 +526,9 @@ def test_openai_compatible_backend_posts_chat_completion(monkeypatch, tmp_path) 
     assert captured["payload"]["model"] == "qwen-awq"
     assert captured["payload"]["temperature"] == 0
     assert captured["payload"]["chat_template_kwargs"] == {"enable_thinking": False}
-    assert captured["payload"]["messages"][0]["content"][0] == {"type": "text", "text": "prompt"}
+    assert "Frame 01" in captured["payload"]["messages"][0]["content"][0]["text"]
     assert captured["payload"]["messages"][0]["content"][1]["image_url"]["url"] == "data:image/jpeg;base64,YWJj"
+    assert captured["payload"]["messages"][0]["content"][-1] == {"type": "text", "text": "prompt"}
     assert captured["headers"]["Authorization"] == "Bearer secret"
 
 
@@ -495,27 +588,39 @@ def test_openai_compatible_backend_chunks_images_without_dropping_evidence(monke
     backend = OpenAICompatibleVLMBackend("qwen-awq", "http://localhost:30000/v1")
     calls = []
 
-    def fake_generate_text(prompt: str, image_paths: list[str], max_tokens: int) -> str:
-        calls.append((prompt, list(image_paths), max_tokens))
+    image_records = [
+        {"path": name, "slot": index + 1, "time": f"00:0{index}.000", "phase": "approach"}
+        for index, name in enumerate(["a.jpg", "b.jpg", "c.jpg", "d.jpg", "e.jpg"])
+    ]
+    reversed_image_records = list(reversed(image_records))
+
+    def fake_generate_text(prompt: str, image_paths: list[str], max_tokens: int, image_records=None) -> str:
+        calls.append((prompt, list(image_paths), max_tokens, image_records))
         if image_paths:
             return f"chunk saw {len(image_paths)} images"
         return '{"schema_version":"accident_video_facts.v1","objective_summary":"ok"}'
 
     backend._generate_text = fake_generate_text
 
-    result = backend.generate_json("full prompt", ["a.jpg", "b.jpg", "c.jpg", "d.jpg", "e.jpg"])
+    result = backend.generate_json(
+        "full prompt with verbose evidence package",
+        ["a.jpg", "b.jpg", "c.jpg", "d.jpg", "e.jpg"],
+        reversed_image_records,
+    )
 
     assert result["schema_version"] == "accident_video_facts.v1"
-    assert [images for _, images, _ in calls] == [
+    assert [images for _, images, _, _ in calls] == [
         ["a.jpg", "b.jpg"],
         ["c.jpg", "d.jpg"],
         ["e.jpg"],
         [],
     ]
-    assert [tokens for _, _, tokens in calls] == [128, 128, 128, 512]
+    assert [tokens for _, _, tokens, _ in calls] == [128, 128, 128, 512]
+    assert calls[0][3] == image_records[:2]
     assert "chunk saw 2 images" in calls[-1][0]
-    assert "full prompt" not in calls[-1][0]
-    assert "Return only JSON" in calls[-1][0]
+    assert "full prompt with verbose evidence package" not in calls[-1][0]
+    assert "insurance_claim_fields" in calls[-1][0]
+    assert "Use all chunk observations below as evidence" in calls[-1][0]
 
 
 def test_get_qwen_backend_can_use_openai_compatible_backend(monkeypatch) -> None:

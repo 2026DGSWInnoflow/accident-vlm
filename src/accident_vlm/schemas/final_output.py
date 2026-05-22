@@ -47,6 +47,8 @@ class AccidentFactOutput(BaseModel):
     timeline: list[dict[str, Any]] = Field(default_factory=list)
     collision: dict[str, Any] = Field(default_factory=dict)
     speed_and_distance: dict[str, Any] = Field(default_factory=dict)
+    insurance_claim_fields: dict[str, Any] = Field(default_factory=dict)
+    accident_type_candidates: dict[str, Any] = Field(default_factory=dict)
     uncertainties: list[str] = Field(default_factory=list)
     evidence_index: dict[str, Any] = Field(default_factory=dict)
     rag_hints: dict[str, Any]

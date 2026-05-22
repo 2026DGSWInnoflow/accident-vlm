@@ -1,10 +1,13 @@
 from pathlib import Path
 
 from accident_vlm.modules.actor_tracking import (
+    ACCIDENT_ACTOR_TAXONOMY,
     Detection,
     UltralyticsTracker,
+    compare_tracker_outputs,
     detect_and_track_actors,
     detect_and_track_segments,
+    detector_profile,
 )
 from accident_vlm.schemas.preprocessing import SelectedFrame
 
@@ -128,3 +131,54 @@ def test_detect_and_track_segments_extracts_dense_segment_frames(monkeypatch, tm
     assert calls["indices"] == [10, 11, 12, 13]
     assert tracks[0]["source_stage"] == "segment_tracking"
     assert len(tracks[0]["positions"]) == 4
+
+
+def test_accident_actor_taxonomy_and_detector_profile_are_explicit() -> None:
+    assert "kickboard" in ACCIDENT_ACTOR_TAXONOMY
+    assert ACCIDENT_ACTOR_TAXONOMY["traffic_light"]["korean_label"] == "신호등"
+    profile = detector_profile("yolov8x.pt", "bytetrack")
+    assert profile["base_model_family"] == "coco_pretrained"
+    assert profile["custom_traffic_model"] is False
+    custom_profile = detector_profile("accident-traffic-custom.pt", "botsort")
+    assert custom_profile["custom_traffic_model"] is True
+
+
+def test_detect_and_track_actors_keeps_low_confidence_actor_with_uncertainty(monkeypatch) -> None:
+    class LowConfidenceDetector:
+        name = "low"
+
+        def detect(self, image_path):
+            return [Detection(label="보행자", confidence=0.22, bbox=[10, 10, 20, 30], track_id="P1")]
+
+    monkeypatch.setattr("accident_vlm.modules.actor_tracking._read_frame_shape", lambda path: (100, 200))
+
+    tracks = detect_and_track_actors(
+        [
+            SelectedFrame(
+                id="frame_000003",
+                time="00:00.100",
+                frame_index=3,
+                purpose="impact_candidate",
+                path="/tmp/frame3.jpg",
+            )
+        ],
+        LowConfidenceDetector(),
+    )
+
+    assert tracks[0]["confidence"] == "low"
+    assert tracks[0]["uncertainty_reasons"] == ["low_detector_confidence"]
+
+
+def test_compare_tracker_outputs_reports_overlap_and_disagreements() -> None:
+    comparison = compare_tracker_outputs(
+        bytetrack_tracks=[{"track_id": "T1", "positions": [{"frame_id": "f1"}]}],
+        botsort_tracks=[
+            {"track_id": "T1", "positions": [{"frame_id": "f1"}, {"frame_id": "f2"}]},
+            {"track_id": "T2", "positions": [{"frame_id": "f3"}]},
+        ],
+    )
+
+    assert comparison["bytetrack_count"] == 1
+    assert comparison["botsort_count"] == 2
+    assert comparison["shared_track_ids"] == ["T1"]
+    assert comparison["disagreement_count"] == 1

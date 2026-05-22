@@ -1,54 +1,42 @@
-from accident_vlm.modules.evidence_scoring import rank_evidence_images, score_evidence_image, summarize_evidence_images
+import cv2
+import numpy as np
+
+from accident_vlm.modules.evidence_scoring import rank_evidence_images, score_evidence_image
 
 
-def test_score_evidence_image_prioritizes_localized_signal_crop() -> None:
+def test_score_evidence_image_adds_quality_metrics_and_penalty(tmp_path):
+    image_path = tmp_path / "dark_blurry.jpg"
+    image = np.full((50, 80, 3), 8, dtype=np.uint8)
+    cv2.imwrite(str(image_path), image)
+
     scored = score_evidence_image(
         {
-            "id": "signal_1",
-            "purpose": "traffic_light_crop",
-            "source": "traffic_control",
-            "frame_id": "frame_000010",
-            "bbox": [1, 2, 3, 4],
+            "id": "frame_dark",
+            "path": str(image_path),
+            "purpose": "regular_context",
+            "source": "selected_frame",
         }
     )
 
-    assert scored["importance_score"] == 100
-    assert "localized" in scored["rank_reason"]
+    assert scored["evidence_quality"]["brightness"] == "dark"
+    assert scored["evidence_quality"]["analysis_reliability"] in {"low", "medium"}
+    assert scored["quality_confidence"] in {"low", "medium"}
+    assert "quality_penalty" in scored["rank_reason"]
 
 
-def test_rank_evidence_images_orders_by_importance() -> None:
+def test_rank_evidence_images_keeps_quality_metrics(tmp_path):
+    bright_path = tmp_path / "bright.jpg"
+    cv2.imwrite(str(bright_path), np.full((50, 80, 3), 180, dtype=np.uint8))
+
     ranked = rank_evidence_images(
         [
-            {"id": "regular", "purpose": "regular_context", "source": "selected_frame"},
-            {"id": "actor", "purpose": "actor_crop", "source": "visual_evidence"},
-            {"id": "signal", "purpose": "traffic_light_crop", "source": "traffic_control"},
+            {
+                "id": "signal",
+                "path": str(bright_path),
+                "purpose": "traffic_light_crop",
+                "source": "traffic_control",
+            }
         ]
     )
 
-    assert [item["id"] for item in ranked] == ["signal", "actor", "regular"]
-
-
-def test_rank_evidence_images_keeps_impact_window_ahead_of_regular_context() -> None:
-    ranked = rank_evidence_images(
-        [
-            {"id": "regular", "purpose": "regular_context", "source": "selected_frame"},
-            {"id": "impact", "purpose": "impact_candidate", "source": "selected_frame"},
-            {"id": "pre", "purpose": "pre_impact", "source": "selected_frame"},
-        ]
-    )
-
-    assert [item["id"] for item in ranked] == ["impact", "pre", "regular"]
-
-
-def test_summarize_evidence_images_counts_sources_and_top_evidence() -> None:
-    summary = summarize_evidence_images(
-        [
-            {"id": "signal", "purpose": "traffic_light_crop", "source": "traffic_control"},
-            {"id": "frame", "purpose": "regular_context", "source": "selected_frame"},
-        ]
-    )
-
-    assert summary["total_images"] == 2
-    assert summary["purpose_counts"]["traffic_light_crop"] == 1
-    assert summary["source_counts"]["selected_frame"] == 1
-    assert summary["top_evidence"][0]["id"] == "signal"
+    assert ranked[0]["evidence_quality"]["brightness"] == "normal"

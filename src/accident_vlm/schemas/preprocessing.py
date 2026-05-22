@@ -25,6 +25,9 @@ class InputQuality(BaseModel):
     camera_shake_score: dict = Field(default_factory=dict)
     occlusion: str
     analysis_reliability: str
+    timeline: list[dict] = Field(default_factory=list)
+    segment_quality: list[dict] = Field(default_factory=list)
+    visibility_conditions: dict = Field(default_factory=dict)
 
 
 class SelectedFrame(BaseModel):
@@ -49,15 +52,20 @@ class PipelineContext(BaseModel):
     input_quality: InputQuality | None = None
     selected_frames: list[SelectedFrame] = Field(default_factory=list)
     selected_segments: list[dict] = Field(default_factory=list)
+    event_scan_candidates: list[dict] = Field(default_factory=list)
+    rejected_frame_candidates: list[dict] = Field(default_factory=list)
     ocr_observations: list[dict] = Field(default_factory=list)
     ocr_summary: dict = Field(default_factory=dict)
     scene_type_candidates: list[dict] = Field(default_factory=list)
     tracks: list[dict] = Field(default_factory=list)
+    tracker_comparison: dict = Field(default_factory=dict)
     road_geometry: dict = Field(default_factory=dict)
     speed_and_distance: dict = Field(default_factory=dict)
     traffic_control: dict = Field(default_factory=dict)
     event_candidates: list[dict] = Field(default_factory=list)
+    preprocessing_uncertainties: list[str] = Field(default_factory=list)
     overlays: list[dict] = Field(default_factory=list)
     crops: list[dict] = Field(default_factory=list)
+    contact_sheets: list[dict] = Field(default_factory=list)
     evidence_images: list[dict] = Field(default_factory=list)
     evidence_package: dict = Field(default_factory=dict)

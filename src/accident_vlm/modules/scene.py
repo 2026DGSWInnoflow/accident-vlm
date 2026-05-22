@@ -12,6 +12,7 @@ def classify_scene_candidates(
     crosswalk = traffic_control.get("crosswalk", {})
     signal = traffic_control.get("signal", {})
     lane_count_value = road_geometry.get("visible_lane_count", {}).get("value")
+    road_markings = road_geometry.get("road_marking_candidates", [])
 
     if crosswalk.get("visible"):
         candidates.append(
@@ -39,6 +40,25 @@ def classify_scene_candidates(
                 "confidence": road_geometry.get("visible_lane_count", {}).get("confidence", "medium"),
                 "source": "road_geometry",
                 "evidence": road_geometry.get("visible_lane_count", {}).get("evidence", []),
+            }
+        )
+    marking_labels = {
+        "crosswalk": ("횡단보도", ["crosswalk", "pedestrian_crossing"]),
+        "stop_line": ("정지선", ["stop_line", "intersection_control"]),
+        "centerline_yellow": ("중앙선", ["centerline", "opposing_lanes"]),
+    }
+    for marking in road_markings if isinstance(road_markings, list) else []:
+        label = marking_labels.get(str(marking.get("type")))
+        if not label:
+            continue
+        value, keywords = label
+        candidates.append(
+            {
+                "value": value,
+                "confidence": marking.get("confidence", "medium"),
+                "source": "road_marking_candidate",
+                "evidence": [marking.get("frame_id")] if marking.get("frame_id") else [],
+                "scenario_keywords": keywords,
             }
         )
     if not candidates:

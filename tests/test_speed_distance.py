@@ -215,3 +215,57 @@ def test_estimate_speed_uses_ocr_summary_before_raw_observations() -> None:
     assert selected["source"] == "ocr_summary"
     assert selected["numeric_kmh"] == 48.0
     assert selected["range_kmh"] == [47.0, 49.0]
+
+
+def test_estimate_speed_uses_bev_bottom_center_formula_when_geometry_is_available() -> None:
+    result = estimate_speed_and_distance(
+        ocr_observations=[],
+        tracks=[
+            {
+                "track_id": "vehicle_1",
+                "confidence": "medium",
+                "positions": [
+                    {"time": "00:00.000", "frame_id": "frame_000000", "bbox": [0, 0, 20, 20]},
+                    {"time": "00:01.000", "frame_id": "frame_000030", "bbox": [0, 30, 20, 50]},
+                ],
+            }
+        ],
+        road_geometry={
+            "homography": {
+                "available": True,
+                "matrix": [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
+                "pixels_per_meter": 10.0,
+                "confidence": "medium",
+            },
+            "bev": {"confidence": "medium", "confidence_score": 0.72},
+        },
+    )
+
+    vehicle_speed = next(item for item in result["speed_estimates"] if item["actor_id"] == "vehicle_1")
+    assert vehicle_speed["method"] == "bev_tracking_estimate"
+    assert vehicle_speed["numeric_kmh"] == 10.8
+    assert vehicle_speed["formula"]["delta_time_sec"] == 1.0
+    assert vehicle_speed["evidence"] == ["frame_000000", "frame_000030"]
+    assert result["distance_estimates"][0]["range_m"] == [2.4, 3.6]
+
+
+def test_estimate_speed_keeps_absolute_speed_low_when_bev_is_unavailable() -> None:
+    result = estimate_speed_and_distance(
+        ocr_observations=[],
+        tracks=[
+            {
+                "track_id": "vehicle_1",
+                "positions": [
+                    {"time": "00:00.000", "frame_id": "frame_000000", "bbox": [0, 0, 20, 20]},
+                    {"time": "00:01.000", "frame_id": "frame_000030", "bbox": [20, 40, 40, 60]},
+                ],
+            }
+        ],
+        road_geometry={"homography": {"available": False}, "bev": {"confidence": "unknown"}},
+    )
+
+    vehicle_speed = next(item for item in result["speed_estimates"] if item["actor_id"] == "vehicle_1")
+    assert vehicle_speed["method"] == "not_available"
+    assert vehicle_speed["confidence"] == "unknown"
+    assert result["relative_motion"][0]["confidence"] in {"medium", "low"}
+    assert result["geometry_dependency"]["failure_reason"]

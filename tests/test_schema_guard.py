@@ -113,7 +113,68 @@ def test_repair_and_constrain_payload_fills_required_fields_and_unknowns_unsuppo
     assert repaired["scene_type"]["value"] == "확인불가"
     assert repaired["scene_type"]["status"] == "unknown"
     assert repaired["traffic_control"]["signal"]["value"] == "확인불가"
+    assert "accident_datetime" in repaired["insurance_claim_fields"]
+    assert "vehicle_to_vehicle" in repaired["accident_type_candidates"]
     assert "근거 없는 값이 확인불가로 조정됨: scene_type" in repaired["uncertainties"]
+
+
+def test_repair_and_constrain_payload_guards_insurance_fields_and_accident_candidates():
+    payload = _minimal_final_output_payload("객관 사실 요약")
+    payload["insurance_claim_fields"] = {
+        "road_shape": {
+            "value": "교차로",
+            "status": "observed",
+            "confidence": "high",
+            "source": ["lane_overlay"],
+            "evidence": [],
+        },
+        "lane_count": {
+            "value": "3차로",
+            "status": "observed",
+            "confidence": "medium",
+            "source": [],
+            "evidence": ["storyboard_slot_01"],
+        },
+        "ego_direction": {
+            "value": "직진",
+            "status": "observed",
+            "confidence": "medium",
+            "source": [],
+            "evidence": [],
+        },
+    }
+    payload["accident_type_candidates"] = {
+        "vehicle_to_pedestrian": {
+            "status": "observed",
+            "confidence": "high",
+            "source": ["actor_crop"],
+            "evidence": [],
+        },
+        "vehicle_to_vehicle": {
+            "status": "observed",
+            "confidence": "medium",
+            "source": [],
+            "evidence": ["storyboard_slot_02"],
+        },
+        "single_vehicle": {
+            "status": "observed",
+            "confidence": "low",
+            "source": [],
+            "evidence": [],
+        },
+    }
+
+    repaired = repair_and_constrain_payload(payload)
+
+    assert repaired["insurance_claim_fields"]["road_shape"]["value"] == "교차로"
+    assert repaired["insurance_claim_fields"]["lane_count"]["value"] == "3차로"
+    assert repaired["insurance_claim_fields"]["ego_direction"]["value"] == "확인불가"
+    assert repaired["accident_type_candidates"]["vehicle_to_pedestrian"]["status"] == "observed"
+    assert repaired["accident_type_candidates"]["vehicle_to_vehicle"]["status"] == "observed"
+    assert repaired["accident_type_candidates"]["single_vehicle"]["status"] == "unknown"
+    assert "근거 없는 값이 확인불가로 조정됨: insurance_claim_fields.ego_direction" in repaired[
+        "uncertainties"
+    ]
 
 
 def test_repair_and_constrain_payload_requires_evidence_for_speed_collision_and_timeline():

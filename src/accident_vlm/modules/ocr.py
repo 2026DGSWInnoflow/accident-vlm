@@ -16,7 +16,7 @@ from accident_vlm.schemas.preprocessing import SelectedFrame
 class OcrBackend(Protocol):
     name: str
 
-    def read_text(self, image_path: Path) -> list[dict]:
+    def read_text(self, image_path: Path, field_hint: str | None = None) -> list[dict]:
         ...
 
 
@@ -26,7 +26,7 @@ class UnavailableOcrBackend:
     def __init__(self, reason: str) -> None:
         self.reason = reason
 
-    def read_text(self, image_path: Path) -> list[dict]:
+    def read_text(self, image_path: Path, field_hint: str | None = None) -> list[dict]:
         return [
             {
                 "text": "",
@@ -49,7 +49,7 @@ class TesseractOcrBackend:
             raise RuntimeError("pytesseract is not installed") from exc
         self._pytesseract = pytesseract
 
-    def read_text(self, image_path: Path) -> list[dict]:
+    def read_text(self, image_path: Path, field_hint: str | None = None) -> list[dict]:
         image = cv2.imread(str(image_path))
         if image is None:
             return []
@@ -57,7 +57,7 @@ class TesseractOcrBackend:
         data = self._pytesseract.image_to_data(
             rgb,
             output_type=self._pytesseract.Output.DICT,
-            config="--psm 6",
+            config=_tesseract_config_for_field(field_hint),
         )
         observations: list[dict] = []
         for index, text in enumerate(data.get("text", [])):
@@ -96,7 +96,7 @@ class EasyOcrBackend:
             raise RuntimeError("easyocr is not installed") from exc
         self._reader = easyocr.Reader(languages or ["ko", "en"], gpu=True)
 
-    def read_text(self, image_path: Path) -> list[dict]:
+    def read_text(self, image_path: Path, field_hint: str | None = None) -> list[dict]:
         results = self._reader.readtext(str(image_path))
         observations: list[dict] = []
         for bbox, text, confidence in results:
@@ -141,6 +141,18 @@ OVERLAY_ROIS = {
     "bottom_left": (0.0, 0.65, 0.55, 1.0),
     "bottom_right": (0.45, 0.65, 1.0, 1.0),
 }
+
+FIELD_ROI_HINTS = {
+    "full_frame": ["general"],
+    "top_band": ["general", "datetime", "gps"],
+    "bottom_band": ["general", "datetime", "speed", "gps"],
+    "top_left": ["general", "datetime", "gps"],
+    "top_right": ["general", "speed", "gps"],
+    "bottom_left": ["general", "datetime", "gps"],
+    "bottom_right": ["general", "speed", "gps"],
+}
+
+FIELD_FAILURE_TRACKED = {"datetime", "speed", "gps"}
 
 
 def parse_overlay_text(text: str) -> dict:
@@ -207,7 +219,16 @@ def build_overlay_rois(image: np.ndarray) -> list[dict]:
         y2 = int(round(height * y2_ratio))
         crop = image[y1:y2, x1:x2]
         if crop.size:
-            rois.append({"name": name, "bbox": [x1, y1, x2, y2], "image": crop})
+            rois.append(
+                {
+                    "name": name,
+                    "bbox": [x1, y1, x2, y2],
+                    "image": crop,
+                    "roi_kind": "fixed",
+                    "target_fields": FIELD_ROI_HINTS.get(name, ["general"]),
+                }
+            )
+    rois.extend(_detect_auto_text_rois(image))
     return rois
 
 
@@ -232,22 +253,60 @@ def extract_ocr_observations(
         if image is None:
             continue
         for roi in build_overlay_rois(image):
-            roi_path = Path(frame.path)
-            if roi_output_dir:
-                roi_path = roi_output_dir / f"{frame.id}_{roi['name']}.jpg"
-                cv2.imwrite(str(roi_path), roi["image"])
+            target_fields = roi.get("target_fields") or ["general"]
             origin_x, origin_y = roi["bbox"][0], roi["bbox"][1]
-            for item in backend.read_text(roi_path):
-                observation = {
-                    "time": frame.time,
-                    "frame_id": frame.id,
-                    "roi_name": roi["name"],
-                    "roi_bbox": roi["bbox"],
-                    **item,
-                    "bbox": _offset_bbox(item.get("bbox"), origin_x, origin_y),
-                }
-                observation["parsed"] = parse_overlay_text(observation.get("text", ""))
-                observations.append(observation)
+            for target_field in target_fields:
+                prepared_image = _prepare_ocr_roi(roi["image"], target_field)
+                roi_path = Path(frame.path)
+                if roi_output_dir:
+                    roi_path = roi_output_dir / f"{frame.id}_{roi['name']}_{target_field}.jpg"
+                    cv2.imwrite(str(roi_path), prepared_image)
+                items = _read_text_with_field_hint(backend, roi_path, target_field)
+                if not items and target_field in FIELD_FAILURE_TRACKED:
+                    observations.append(
+                        {
+                            "time": frame.time,
+                            "frame_id": frame.id,
+                            "roi_name": roi["name"],
+                            "roi_kind": roi.get("roi_kind", "fixed"),
+                            "target_field": target_field,
+                            "ocr_pass": target_field,
+                            "roi_bbox": roi["bbox"],
+                            "bbox": None,
+                            "text": "",
+                            "normalized_text": "",
+                            "parsed": {},
+                            "confidence": 0.0,
+                            "source": getattr(backend, "name", "ocr"),
+                            "status": "failed",
+                            "failure_reason": "no_text_detected",
+                            "crop_path": str(roi_path),
+                            "image_path": str(roi_path),
+                        }
+                    )
+                    continue
+                for item in items:
+                    text = item.get("text", "")
+                    normalized_text = _normalize_ocr_text(text)
+                    parsed = parse_overlay_text(normalized_text)
+                    if target_field != "general":
+                        parsed = _filter_parsed_for_field(parsed, target_field)
+                    observation = {
+                        "time": frame.time,
+                        "frame_id": frame.id,
+                        "roi_name": roi["name"],
+                        "roi_kind": roi.get("roi_kind", "fixed"),
+                        "target_field": target_field,
+                        "ocr_pass": target_field,
+                        "roi_bbox": roi["bbox"],
+                        **item,
+                        "status": "observed",
+                        "normalized_text": normalized_text,
+                        "parsed": parsed,
+                        "crop_path": str(roi_path),
+                        "bbox": _offset_bbox(item.get("bbox"), origin_x, origin_y),
+                    }
+                    observations.append(observation)
     return observations
 
 
@@ -271,6 +330,7 @@ def summarize_ocr_observations(observations: list[dict]) -> dict:
         "datetime": _vote_text_value(datetime_values, "ocr_overlay"),
         "speed": _summarize_speed_values(speed_values),
         "gps": _summarize_gps_values(gps_values),
+        "field_votes": _field_vote_summary(observations),
         "observation_count": len(observations),
     }
 
@@ -322,6 +382,12 @@ def _summarize_speed_values(values: list[tuple[float, str, float]]) -> dict:
     selected = float(median(speeds))
     spread = max(speeds) - min(speeds)
     confidence = "high" if len(values) >= 3 and spread <= 3 else "medium" if spread <= 8 else "low"
+    temporal_consistency = "stable" if spread <= 3 and len(filtered_values) >= 3 else "variable"
+    final_confidence_score = _final_confidence_score(
+        sample_count=len(filtered_values),
+        mean_ocr_confidence=float(np.mean([confidence for _, _, confidence in filtered_values])),
+        consistency_score=max(0.0, 1.0 - min(spread, 30.0) / 30.0),
+    )
     return {
         "value": f"{selected:g}km/h",
         "numeric_kmh": selected,
@@ -331,6 +397,8 @@ def _summarize_speed_values(values: list[tuple[float, str, float]]) -> dict:
         "source": "ocr_overlay",
         "evidence": [frame_id for _, frame_id, _ in filtered_values],
         "sample_count": len(filtered_values),
+        "temporal_consistency": temporal_consistency,
+        "final_confidence_score": final_confidence_score,
         "candidates": candidates,
         "rejected_outliers": rejected_outliers,
     }
@@ -400,4 +468,134 @@ def _summarize_gps_values(values: list[tuple[dict, str, float]]) -> dict:
         "source": "ocr_overlay",
         "evidence": [frame_id for _, frame_id, _ in values],
         "sample_count": len(values),
+        "final_confidence_score": _final_confidence_score(
+            sample_count=len(values),
+            mean_ocr_confidence=float(np.mean([confidence for _, _, confidence in values])),
+            consistency_score=0.8 if len(values) >= 2 else 0.45,
+        ),
     }
+
+
+def _tesseract_config_for_field(field_hint: str | None) -> str:
+    configs = {
+        "datetime": "--psm 7 -c tessedit_char_whitelist=0123456789:/.-년월일 ",
+        "speed": "--psm 7 -c tessedit_char_whitelist=0123456789.km/hKMPHSPDspd속도:= ",
+        "gps": "--psm 7 -c tessedit_char_whitelist=0123456789.,NSEWnsewGPSgpsLATLONlatlon위치:- ",
+        "general": "--psm 6",
+    }
+    return configs.get(field_hint or "general", "--psm 6")
+
+
+def _detect_auto_text_rois(image: np.ndarray) -> list[dict]:
+    height, width = image.shape[:2]
+    bands = [
+        ("auto_top_text", 0, int(height * 0.28), ["datetime", "gps"]),
+        ("auto_bottom_text", int(height * 0.62), height, ["datetime", "speed", "gps"]),
+    ]
+    rois: list[dict] = []
+    for name, y1, y2, target_fields in bands:
+        band = image[y1:y2, :]
+        if band.size == 0:
+            continue
+        gray = cv2.cvtColor(band, cv2.COLOR_BGR2GRAY)
+        _, threshold = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        contours, _ = cv2.findContours(threshold, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        boxes = [cv2.boundingRect(contour) for contour in contours]
+        boxes = [
+            (x, y, w, h)
+            for x, y, w, h in boxes
+            if 4 <= h <= max(12, int((y2 - y1) * 0.8)) and w >= 3
+        ]
+        if not boxes:
+            continue
+        x_min = max(0, min(x for x, _, _, _ in boxes) - 8)
+        y_min = max(0, min(y for _, y, _, _ in boxes) - 6)
+        x_max = min(width, max(x + w for x, _, w, _ in boxes) + 8)
+        y_max = min(y2 - y1, max(y + h for _, y, _, h in boxes) + 6)
+        crop = band[y_min:y_max, x_min:x_max]
+        if crop.size:
+            rois.append(
+                {
+                    "name": name,
+                    "bbox": [x_min, y1 + y_min, x_max, y1 + y_max],
+                    "image": crop,
+                    "roi_kind": "auto_text_candidate",
+                    "target_fields": target_fields,
+                }
+            )
+    return rois
+
+
+def _prepare_ocr_roi(image: np.ndarray, target_field: str) -> np.ndarray:
+    if target_field == "general":
+        return image
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    scale = 2 if min(gray.shape[:2]) < 80 else 1
+    if scale > 1:
+        gray = cv2.resize(gray, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
+    denoised = cv2.bilateralFilter(gray, 5, 35, 35)
+    if target_field in {"datetime", "speed", "gps"}:
+        return cv2.adaptiveThreshold(
+            denoised,
+            255,
+            cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+            cv2.THRESH_BINARY,
+            31,
+            7,
+        )
+    return denoised
+
+
+def _read_text_with_field_hint(backend: OcrBackend, roi_path: Path, target_field: str) -> list[dict]:
+    try:
+        return backend.read_text(roi_path, field_hint=target_field)
+    except TypeError:
+        return backend.read_text(roi_path)
+
+
+def _filter_parsed_for_field(parsed: dict, target_field: str) -> dict:
+    field_map = {"datetime": "datetime", "speed": "speed_kmh", "gps": "gps"}
+    key = field_map.get(target_field)
+    if not key:
+        return parsed
+    return {key: parsed[key]} if key in parsed else {}
+
+
+def _field_vote_summary(observations: list[dict]) -> dict:
+    summary: dict[str, dict] = {}
+    for field in ("datetime", "speed", "gps"):
+        field_observations = [
+            item
+            for item in observations
+            if item.get("target_field") in {field, "general", None}
+        ]
+        observed = [
+            item
+            for item in field_observations
+            if item.get("status", "observed") == "observed" and _field_present(item.get("parsed", {}), field)
+        ]
+        failures = [item for item in field_observations if item.get("status") == "failed"]
+        summary[field] = {
+            "observed_count": len(observed),
+            "failure_count": len(failures),
+            "mean_confidence": round(float(np.mean([float(item.get("confidence") or 0.0) for item in observed])), 3)
+            if observed
+            else 0.0,
+            "evidence": [item.get("frame_id") for item in observed],
+            "failure_evidence": [item.get("crop_path") for item in failures[:8]],
+        }
+    return summary
+
+
+def _field_present(parsed: dict, field: str) -> bool:
+    return (
+        (field == "datetime" and "datetime" in parsed)
+        or (field == "speed" and "speed_kmh" in parsed)
+        or (field == "gps" and "gps" in parsed)
+    )
+
+
+def _final_confidence_score(sample_count: int, mean_ocr_confidence: float, consistency_score: float) -> float:
+    sample_score = min(1.0, sample_count / 3.0)
+    score = mean_ocr_confidence * 0.45 + consistency_score * 0.35 + sample_score * 0.20
+    return round(max(0.0, min(1.0, score)), 3)

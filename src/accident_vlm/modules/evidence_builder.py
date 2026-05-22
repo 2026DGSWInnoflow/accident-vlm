@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Any
 
 from accident_vlm.modules.evidence_scoring import rank_evidence_images, summarize_evidence_images
+from accident_vlm.modules.vlm_storyboard import build_vlm_storyboard
 from accident_vlm.schemas.preprocessing import PipelineContext
 
 
@@ -10,26 +11,33 @@ def build_evidence_package(context: PipelineContext) -> dict:
     metadata = context.video_metadata.model_dump() if context.video_metadata else {}
     evidence_images = rank_evidence_images(collect_evidence_images(context))
     context.evidence_images = deepcopy(evidence_images)
-    return {
+    package = {
         "frames": [frame.model_dump() for frame in context.selected_frames],
         "selected_segments": deepcopy(context.selected_segments),
         "overlays": deepcopy(context.overlays),
         "crops": deepcopy(context.crops),
+        "contact_sheets": deepcopy(context.contact_sheets),
         "evidence_images": evidence_images,
         "precomputed_facts": {
             "metadata": metadata,
             "input_quality": context.input_quality.model_dump() if context.input_quality else {},
+            "preprocessing_uncertainties": deepcopy(context.preprocessing_uncertainties),
             "ocr": deepcopy(context.ocr_observations),
             "ocr_summary": deepcopy(context.ocr_summary),
             "scene_type_candidates": deepcopy(context.scene_type_candidates),
             "tracks": deepcopy(context.tracks),
+            "tracker_comparison": deepcopy(context.tracker_comparison),
             "road_geometry": deepcopy(context.road_geometry),
             "speed_estimates": deepcopy(context.speed_and_distance),
             "traffic_control": deepcopy(context.traffic_control),
+            "event_scan_candidates": deepcopy(context.event_scan_candidates),
+            "rejected_frame_candidates": deepcopy(context.rejected_frame_candidates),
             "event_candidates": deepcopy(context.event_candidates),
             "evidence_summary": summarize_evidence_images(evidence_images),
         },
     }
+    package["vlm_storyboard"] = build_vlm_storyboard(package)
+    return package
 
 
 def collect_evidence_images(context: PipelineContext) -> list[dict]:
@@ -48,7 +56,7 @@ def collect_evidence_images(context: PipelineContext) -> list[dict]:
                 frame_id=frame.id,
             )
 
-    for item in [*context.overlays, *context.crops]:
+    for item in [*context.overlays, *context.crops, *context.contact_sheets]:
         if isinstance(item, dict):
             _append_from_dict(records, seen_paths, item, source=item.get("purpose", "visual_evidence"))
 

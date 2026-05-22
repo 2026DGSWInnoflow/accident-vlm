@@ -16,6 +16,11 @@ QUALITY_MIN_MOTION_CHANGE_SCORE = 6.0
 QUALITY_SEGMENT_TRACKING_STRIDE_FRAMES = 2
 QUALITY_MAX_SEGMENT_TRACKING_FRAMES = 180
 QUALITY_VLM_FRAME_BUDGET = 20
+QUALITY_EVENT_SCAN_SAMPLE_FPS = 5.0
+QUALITY_EVENT_SCAN_TOP_K = 5
+QUALITY_EVENT_SCAN_MIN_SCORE = 8.0
+QUALITY_PRECISION_EVENT_FPS = 15.0
+QUALITY_MIN_IMPACT_FRAMES = 5
 DEFAULT_QWEN_MODEL_ID = os.getenv("ACCIDENT_VLM_QWEN_MODEL_ID", "/home/minsung0830/accident-vlm/models/Qwen3.6-27B")
 
 
@@ -30,10 +35,12 @@ class PipelineConfig(BaseModel):
     enable_scene_analysis: bool = True
     enable_actor_tracking: bool = True
     enable_segment_tracking: bool = True
+    enable_tracker_comparison: bool = False
     enable_road_geometry: bool = True
     enable_speed_distance: bool = True
     enable_traffic_control: bool = True
     enable_event_detection: bool = True
+    enable_event_scan: bool = True
     enable_vlm: bool = False
     frame_output_dirname: str = "frames"
     overlay_output_dirname: str = "overlays"
@@ -44,9 +51,15 @@ class PipelineConfig(BaseModel):
     qwen_model_id: str = DEFAULT_QWEN_MODEL_ID
     device: str = "auto"
     lane_width_m: float = Field(default=3.2, gt=0)
+    lane_segmentation_model_path: Path | None = None
     motion_sample_interval_sec: float = Field(default=QUALITY_MOTION_SAMPLE_INTERVAL_SEC, gt=0)
     max_motion_keyframes: int = Field(default=QUALITY_MAX_MOTION_KEYFRAMES, gt=0)
     min_motion_change_score: float = Field(default=QUALITY_MIN_MOTION_CHANGE_SCORE, ge=0)
     segment_tracking_stride_frames: int = Field(default=QUALITY_SEGMENT_TRACKING_STRIDE_FRAMES, gt=0)
     max_segment_tracking_frames: int = Field(default=QUALITY_MAX_SEGMENT_TRACKING_FRAMES, gt=0)
     vlm_frame_budget: int = Field(default=QUALITY_VLM_FRAME_BUDGET, gt=0)
+    event_scan_sample_fps: float = Field(default=QUALITY_EVENT_SCAN_SAMPLE_FPS, gt=0)
+    event_scan_top_k: int = Field(default=QUALITY_EVENT_SCAN_TOP_K, gt=0)
+    event_scan_min_score: float = Field(default=QUALITY_EVENT_SCAN_MIN_SCORE, ge=0)
+    precision_event_fps: float = Field(default=QUALITY_PRECISION_EVENT_FPS, gt=0)
+    min_impact_frames: int = Field(default=QUALITY_MIN_IMPACT_FRAMES, gt=0)
