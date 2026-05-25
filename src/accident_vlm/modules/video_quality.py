@@ -5,6 +5,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from accident_vlm.modules.video_sampling import iter_capture_frames_at_indices
 from accident_vlm.schemas.preprocessing import InputQuality, SelectedFrame
 from accident_vlm.utils.timecode import parse_timecode
 
@@ -44,11 +45,12 @@ def analyze_input_quality(
     previous_gray: np.ndarray | None = None
     previous_frame: SelectedFrame | None = None
 
-    for frame in selected_frames[:30]:
-        capture.set(cv2.CAP_PROP_POS_FRAMES, frame.frame_index)
-        ok, image = capture.read()
-        if not ok:
-            continue
+    frames_by_index = {frame.frame_index: frame for frame in selected_frames[:30]}
+    for frame_index, image in iter_capture_frames_at_indices(
+        capture,
+        list(frames_by_index),
+    ):
+        frame = frames_by_index[frame_index]
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         blur_score = float(cv2.Laplacian(gray, cv2.CV_64F).var())
         brightness_score = float(gray.mean())

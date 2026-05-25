@@ -80,3 +80,58 @@ def test_analyze_input_quality_reports_timeline_segment_and_visibility_flags(tmp
     assert quality.camera_shake_score["ego_motion_compensated_value"] >= 0
     assert quality.segment_quality[0]["event_id"] == "event_scan_000003"
     assert quality.visibility_conditions["overexposure_candidate"] is True
+
+
+def test_analyze_input_quality_scans_forward_without_random_seeks(monkeypatch, tmp_path) -> None:
+    frames = []
+    for index in range(8):
+        image = np.full((48, 64, 3), index * 20, dtype=np.uint8)
+        if index >= 5:
+            cv2.rectangle(image, (20, 12), (44, 36), (255, 255, 255), -1)
+        frames.append(image)
+
+    captures = []
+
+    class FakeCapture:
+        def __init__(self, path):
+            self.index = 0
+            self.set_calls = []
+            captures.append(self)
+
+        def isOpened(self):
+            return True
+
+        def set(self, prop, value):
+            self.set_calls.append((prop, value))
+            self.index = int(value)
+            return True
+
+        def grab(self):
+            self.index += 1
+            return self.index <= len(frames)
+
+        def read(self):
+            if self.index >= len(frames):
+                return False, None
+            image = frames[self.index]
+            self.index += 1
+            return True, image
+
+        def release(self):
+            pass
+
+    monkeypatch.setattr(cv2, "VideoCapture", FakeCapture)
+
+    quality = analyze_input_quality(
+        tmp_path / "fake.mp4",
+        [
+            SelectedFrame(id="frame_000002", time="00:00.200", frame_index=2, purpose="a"),
+            SelectedFrame(id="frame_000005", time="00:00.500", frame_index=5, purpose="b"),
+        ],
+    )
+
+    assert captures[0].set_calls == []
+    assert [item["frame_id"] for item in quality.timeline] == [
+        "frame_000002",
+        "frame_000005",
+    ]

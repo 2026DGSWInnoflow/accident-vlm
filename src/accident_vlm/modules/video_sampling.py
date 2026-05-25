@@ -24,3 +24,21 @@ def iter_sampled_capture_frames(
             return
         yield target_frame, image
         current_frame += 1
+
+
+def iter_capture_frames_at_indices(
+    capture: Any,
+    frame_indices: list[int],
+) -> Iterator[tuple[int, Any]]:
+    current_frame = 0
+    for target_frame in sorted({index for index in frame_indices if index >= 0}):
+        while current_frame < target_frame:
+            if not capture.grab():
+                return
+            current_frame += 1
+
+        ok, image = capture.read()
+        if not ok:
+            return
+        yield target_frame, image
+        current_frame += 1

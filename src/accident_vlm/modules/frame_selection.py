@@ -6,7 +6,10 @@ import cv2
 from accident_vlm.schemas.preprocessing import SelectedFrame
 from accident_vlm.schemas.preprocessing import VideoMetadata
 from accident_vlm.utils.timecode import frame_to_timecode, parse_timecode, seconds_to_timecode
-from accident_vlm.modules.video_sampling import iter_sampled_capture_frames
+from accident_vlm.modules.video_sampling import (
+    iter_capture_frames_at_indices,
+    iter_sampled_capture_frames,
+)
 
 
 def _floor_decimal(value: Decimal) -> int:
@@ -283,23 +286,16 @@ def extract_selected_frames(
     frames_by_index: dict[int, list[SelectedFrame]] = {}
     for frame in selected_frames:
         frames_by_index.setdefault(frame.frame_index, []).append(frame)
-    sample_indices = sorted(frames_by_index)
-    if not sample_indices:
+    if not frames_by_index:
         capture.release()
         return []
 
     extracted_by_id: dict[str, SelectedFrame] = {}
     try:
-        current_frame = 0
-        for target_frame in sample_indices:
-            while current_frame < target_frame:
-                if not capture.grab():
-                    return [extracted_by_id[frame.id] for frame in selected_frames if frame.id in extracted_by_id]
-                current_frame += 1
-            ok, image = capture.read()
-            if not ok:
-                break
-            current_frame += 1
+        for target_frame, image in iter_capture_frames_at_indices(
+            capture,
+            list(frames_by_index),
+        ):
             for frame in frames_by_index[target_frame]:
                 frame_path = output_dir / f"{frame.id}.jpg"
                 cv2.imwrite(str(frame_path), image)
