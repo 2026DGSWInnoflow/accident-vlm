@@ -96,6 +96,51 @@ def test_detect_and_track_actors_prefers_detector_track_ids(monkeypatch) -> None
     assert len(tracks[0]["positions"]) == 2
 
 
+def test_detect_and_track_actors_uses_batch_detector_when_available(monkeypatch) -> None:
+    class BatchDetector:
+        name = "batch"
+
+        def __init__(self):
+            self.batch_calls = []
+
+        def detect(self, image_path):
+            raise AssertionError("batch detector should not fall back to per-frame detect")
+
+        def detect_many(self, image_paths):
+            self.batch_calls.append([str(path) for path in image_paths])
+            return [
+                [Detection(label="승용차", confidence=0.9, bbox=[10, 20, 60, 80], track_id="T1")],
+                [Detection(label="승용차", confidence=0.8, bbox=[20, 20, 70, 80], track_id="T1")],
+            ]
+
+    detector = BatchDetector()
+    monkeypatch.setattr("accident_vlm.modules.actor_tracking._read_frame_shape", lambda path: (100, 200))
+
+    tracks = detect_and_track_actors(
+        [
+            SelectedFrame(
+                id="frame_000001",
+                time="00:00.033",
+                frame_index=1,
+                purpose="regular_context",
+                path="/tmp/frame1.jpg",
+            ),
+            SelectedFrame(
+                id="frame_000002",
+                time="00:00.066",
+                frame_index=2,
+                purpose="regular_context",
+                path="/tmp/frame2.jpg",
+            ),
+        ],
+        detector,
+    )
+
+    assert detector.batch_calls == [["/tmp/frame1.jpg", "/tmp/frame2.jpg"]]
+    assert len(tracks) == 1
+    assert len(tracks[0]["positions"]) == 2
+
+
 def test_detect_and_track_segments_extracts_dense_segment_frames(monkeypatch, tmp_path) -> None:
     calls = {}
 

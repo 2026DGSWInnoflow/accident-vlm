@@ -57,12 +57,18 @@ class ObjectDetector(Protocol):
     def detect(self, image_path: Path) -> list[Detection]:
         ...
 
+    def detect_many(self, image_paths: list[Path]) -> list[list[Detection]]:
+        ...
+
 
 class NoObjectDetector:
     name = "none"
 
     def detect(self, image_path: Path) -> list[Detection]:
         return []
+
+    def detect_many(self, image_paths: list[Path]) -> list[list[Detection]]:
+        return [[] for _ in image_paths]
 
 
 class UltralyticsDetector:
@@ -79,19 +85,27 @@ class UltralyticsDetector:
         self._model = YOLO(model_name)
 
     def detect(self, image_path: Path) -> list[Detection]:
-        results = self._model(str(image_path), verbose=False)
-        detections: list[Detection] = []
-        for result in results:
-            names = result.names
-            for box in result.boxes:
-                cls_id = int(box.cls[0])
-                raw_label = names.get(cls_id, str(cls_id))
-                label = SUPPORTED_ACTOR_LABELS.get(raw_label, raw_label)
-                xyxy = [int(value) for value in box.xyxy[0].tolist()]
-                detections.append(
-                    Detection(label=label, confidence=float(box.conf[0]), bbox=xyxy)
-                )
-        return detections
+        return self.detect_many([image_path])[0]
+
+    def detect_many(self, image_paths: list[Path]) -> list[list[Detection]]:
+        if not image_paths:
+            return []
+        results = self._model([str(path) for path in image_paths], verbose=False)
+        return [_detections_from_result(result) for result in results]
+
+
+def _detections_from_result(result) -> list[Detection]:
+    detections: list[Detection] = []
+    names = result.names
+    for box in result.boxes:
+        cls_id = int(box.cls[0])
+        raw_label = names.get(cls_id, str(cls_id))
+        label = SUPPORTED_ACTOR_LABELS.get(raw_label, raw_label)
+        xyxy = [int(value) for value in box.xyxy[0].tolist()]
+        detections.append(
+            Detection(label=label, confidence=float(box.conf[0]), bbox=xyxy)
+        )
+    return detections
 
 
 class UltralyticsTracker(UltralyticsDetector):
@@ -107,33 +121,41 @@ class UltralyticsTracker(UltralyticsDetector):
         self.tracker_config = tracker_config
 
     def detect(self, image_path: Path) -> list[Detection]:
+        return self.detect_many([image_path])[0]
+
+    def detect_many(self, image_paths: list[Path]) -> list[list[Detection]]:
+        if not image_paths:
+            return []
         results = self._model.track(
-            source=str(image_path),
+            source=[str(path) for path in image_paths],
             tracker=self.tracker_config,
             persist=True,
             verbose=False,
         )
-        detections: list[Detection] = []
-        for result in results:
-            names = result.names
-            for box in result.boxes:
-                cls_id = int(box.cls[0])
-                raw_label = names.get(cls_id, str(cls_id))
-                label = SUPPORTED_ACTOR_LABELS.get(raw_label, raw_label)
-                xyxy = [int(value) for value in box.xyxy[0]]
-                raw_track_id = getattr(box, "id", None)
-                track_id = None
-                if raw_track_id is not None:
-                    track_id = f"T{int(raw_track_id[0])}"
-                detections.append(
-                    Detection(
-                        label=label,
-                        confidence=float(box.conf[0]),
-                        bbox=xyxy,
-                        track_id=track_id,
-                    )
-                )
-        return detections
+        return [_tracked_detections_from_result(result) for result in results]
+
+
+def _tracked_detections_from_result(result) -> list[Detection]:
+    detections: list[Detection] = []
+    names = result.names
+    for box in result.boxes:
+        cls_id = int(box.cls[0])
+        raw_label = names.get(cls_id, str(cls_id))
+        label = SUPPORTED_ACTOR_LABELS.get(raw_label, raw_label)
+        xyxy = [int(value) for value in box.xyxy[0]]
+        raw_track_id = getattr(box, "id", None)
+        track_id = None
+        if raw_track_id is not None:
+            track_id = f"T{int(raw_track_id[0])}"
+        detections.append(
+            Detection(
+                label=label,
+                confidence=float(box.conf[0]),
+                bbox=xyxy,
+                track_id=track_id,
+            )
+        )
+    return detections
 
 
 @lru_cache(maxsize=8)
@@ -213,6 +235,7 @@ def detect_and_track_actors(
 ) -> list[dict]:
     tracks: list[dict] = []
     next_track_index = 1
+    frame_inputs: list[tuple[SelectedFrame, Path, tuple[int, int]]] = []
 
     for frame in selected_frames:
         if not frame.path:
@@ -220,8 +243,12 @@ def detect_and_track_actors(
         shape = _read_frame_shape(Path(frame.path))
         if shape is None:
             continue
+        frame_inputs.append((frame, Path(frame.path), shape))
+
+    frame_detections = _detect_many(detector, [image_path for _, image_path, _ in frame_inputs])
+
+    for (frame, _, shape), detections in zip(frame_inputs, frame_detections, strict=False):
         height, width = shape
-        detections = detector.detect(Path(frame.path))
         for detection in detections:
             center = _center(detection.bbox)
             candidate_index: int | None = None
@@ -281,6 +308,17 @@ def detect_and_track_actors(
             track["relative_position_end"] = "확인불가"
             track["movement_candidate"] = "확인불가"
     return tracks
+
+
+def _detect_many(detector: ObjectDetector, image_paths: list[Path]) -> list[list[Detection]]:
+    if not image_paths:
+        return []
+    detect_many = getattr(detector, "detect_many", None)
+    if callable(detect_many):
+        detections = detect_many(image_paths)
+        if len(detections) == len(image_paths):
+            return detections
+    return [detector.detect(image_path) for image_path in image_paths]
 
 
 def _update_track_confidence(track: dict) -> None:
