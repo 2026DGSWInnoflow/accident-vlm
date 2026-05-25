@@ -42,6 +42,7 @@ def build_pre_vlm_context(
     video_path: str,
     metadata: VideoMetadata,
     config: PipelineConfig | None = None,
+    build_initial_evidence_package: bool = True,
 ) -> PipelineContext:
     active_config = config or PipelineConfig()
     selected_frames = select_regular_frames(
@@ -58,7 +59,8 @@ def build_pre_vlm_context(
         video_metadata=metadata,
         selected_frames=selected_frames,
     )
-    context.evidence_package = build_evidence_package(context)
+    if build_initial_evidence_package:
+        context.evidence_package = build_evidence_package(context)
     return context
 
 
@@ -68,7 +70,12 @@ def analyze_video_pre_vlm(
 ) -> PipelineContext:
     active_config = config or PipelineConfig()
     metadata = probe_video(video_path)
-    context = build_pre_vlm_context(str(video_path), metadata, active_config)
+    context = build_pre_vlm_context(
+        str(video_path),
+        metadata,
+        active_config,
+        build_initial_evidence_package=False,
+    )
     if active_config.enable_motion_keyframes:
         motion_frames = select_motion_keyframes(
             video_path=video_path,

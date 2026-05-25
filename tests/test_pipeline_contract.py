@@ -42,6 +42,59 @@ def test_build_pre_vlm_context_omits_frames_for_zero_frame_metadata() -> None:
     assert context.evidence_package["frames"] == []
 
 
+def test_analyze_video_pre_vlm_builds_final_evidence_package_once(tmp_path, monkeypatch) -> None:
+    calls = []
+
+    monkeypatch.setattr(
+        "accident_vlm.pipeline.probe_video",
+        lambda video_path: VideoMetadata(
+            duration_sec=1.0,
+            fps=10,
+            resolution="640x480",
+            frame_count=10,
+            has_audio=False,
+        ),
+    )
+    monkeypatch.setattr(
+        "accident_vlm.pipeline.extract_selected_frames",
+        lambda video_path, selected_frames, output_dir: [
+            frame.model_copy(update={"path": str(tmp_path / f"{frame.id}.jpg")})
+            for frame in selected_frames
+        ],
+    )
+    monkeypatch.setattr("accident_vlm.pipeline.analyze_input_quality", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        "accident_vlm.pipeline.build_frame_selection_contact_sheet",
+        lambda frames, output_path, title: {"status": "skipped"},
+    )
+
+    def fake_build_evidence_package(context):
+        calls.append([frame.path for frame in context.selected_frames])
+        return {"frames": [frame.model_dump() for frame in context.selected_frames]}
+
+    monkeypatch.setattr("accident_vlm.pipeline.build_evidence_package", fake_build_evidence_package)
+
+    analyze_video_pre_vlm(
+        tmp_path / "sample.mp4",
+        PipelineConfig(
+            output_dir=tmp_path / "outputs",
+            regular_frame_interval_sec=0.5,
+            enable_motion_keyframes=False,
+            enable_event_scan=False,
+            enable_ocr=False,
+            enable_actor_tracking=False,
+            enable_road_geometry=False,
+            enable_speed_distance=False,
+            enable_traffic_control=False,
+            enable_scene_analysis=False,
+            enable_event_detection=False,
+        ),
+    )
+
+    assert len(calls) == 1
+    assert all(path for path in calls[0])
+
+
 def test_build_evidence_package_is_snapshot_of_mutable_context_fields() -> None:
     context = PipelineContext(
         video_path="sample.mp4",
