@@ -1,3 +1,4 @@
+from pathlib import Path
 import cv2
 import numpy as np
 import pytest
@@ -301,3 +302,57 @@ def test_select_motion_keyframes_scans_forward_without_random_seeks(monkeypatch,
 
     assert captures[0].set_calls == []
     assert selected
+
+
+def test_extract_selected_frames_scans_forward_without_random_seeks(monkeypatch, tmp_path) -> None:
+    from accident_vlm.modules.frame_selection import extract_selected_frames
+
+    frames = [np.full((8, 8, 3), index, dtype=np.uint8) for index in range(8)]
+    captures = []
+    written = []
+
+    class FakeCapture:
+        def __init__(self, path):
+            self.index = 0
+            self.set_calls = []
+            captures.append(self)
+
+        def isOpened(self):
+            return True
+
+        def set(self, prop, value):
+            self.set_calls.append((prop, value))
+            self.index = int(value)
+            return True
+
+        def grab(self):
+            self.index += 1
+            return self.index <= len(frames)
+
+        def read(self):
+            if self.index >= len(frames):
+                return False, None
+            image = frames[self.index]
+            self.index += 1
+            return True, image
+
+        def release(self):
+            pass
+
+    monkeypatch.setattr(cv2, "VideoCapture", FakeCapture)
+    monkeypatch.setattr(cv2, "imwrite", lambda path, image: written.append((path, int(image[0, 0, 0]))) or True)
+
+    selected = [
+        SelectedFrame(id="frame_000002", time="00:00.200", frame_index=2, purpose="a"),
+        SelectedFrame(id="frame_000005", time="00:00.500", frame_index=5, purpose="b"),
+    ]
+
+    extracted = extract_selected_frames(tmp_path / "fake.mp4", selected, tmp_path / "frames")
+
+    assert captures[0].set_calls == []
+    assert [Path(path).name for path, _ in written] == ["frame_000002.jpg", "frame_000005.jpg"]
+    assert [value for _, value in written] == [2, 5]
+    assert [frame.path for frame in extracted] == [
+        str(tmp_path / "frames" / "frame_000002.jpg"),
+        str(tmp_path / "frames" / "frame_000005.jpg"),
+    ]

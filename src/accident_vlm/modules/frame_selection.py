@@ -280,16 +280,30 @@ def extract_selected_frames(
     if not capture.isOpened():
         raise ValueError(f"cannot open video: {video_path}")
 
-    extracted: list[SelectedFrame] = []
+    frames_by_index: dict[int, list[SelectedFrame]] = {}
+    for frame in selected_frames:
+        frames_by_index.setdefault(frame.frame_index, []).append(frame)
+    sample_indices = sorted(frames_by_index)
+    if not sample_indices:
+        capture.release()
+        return []
+
+    extracted_by_id: dict[str, SelectedFrame] = {}
     try:
-        for frame in selected_frames:
-            capture.set(cv2.CAP_PROP_POS_FRAMES, frame.frame_index)
+        current_frame = 0
+        for target_frame in sample_indices:
+            while current_frame < target_frame:
+                if not capture.grab():
+                    return [extracted_by_id[frame.id] for frame in selected_frames if frame.id in extracted_by_id]
+                current_frame += 1
             ok, image = capture.read()
             if not ok:
-                continue
-            frame_path = output_dir / f"{frame.id}.jpg"
-            cv2.imwrite(str(frame_path), image)
-            extracted.append(frame.model_copy(update={"path": str(frame_path)}))
+                break
+            current_frame += 1
+            for frame in frames_by_index[target_frame]:
+                frame_path = output_dir / f"{frame.id}.jpg"
+                cv2.imwrite(str(frame_path), image)
+                extracted_by_id[frame.id] = frame.model_copy(update={"path": str(frame_path)})
     finally:
         capture.release()
-    return extracted
+    return [extracted_by_id[frame.id] for frame in selected_frames if frame.id in extracted_by_id]
