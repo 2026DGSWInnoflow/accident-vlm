@@ -598,6 +598,7 @@ class TransformersQwenBackend:
             )
         self._model.eval()
         self._generate_lock = Lock()
+        self._image_cache: dict[tuple[str, int, int, int], Any] = {}
 
     def generate_json(
         self,
@@ -715,10 +716,21 @@ class TransformersQwenBackend:
         )[0]
 
     def _load_image(self, path: str):
-        image = self._image_cls.open(path).convert("RGB")
         max_side = int(os.getenv("ACCIDENT_VLM_IMAGE_MAX_SIDE", "640"))
+        stat = Path(path).stat()
+        cache_key = (str(Path(path).resolve()), stat.st_mtime_ns, stat.st_size, max_side)
+        cached = self._image_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        image = self._image_cls.open(path).convert("RGB")
         if max_side > 0:
             image.thumbnail((max_side, max_side))
+        self._image_cache[cache_key] = image
+        max_cached = int(os.getenv("ACCIDENT_VLM_IMAGE_CACHE_SIZE", "64"))
+        if max_cached > 0:
+            while len(self._image_cache) > max_cached:
+                self._image_cache.pop(next(iter(self._image_cache)))
         return image
 
 

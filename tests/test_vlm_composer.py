@@ -998,6 +998,70 @@ def test_transformers_backend_generation_uses_global_lock(monkeypatch) -> None:
     assert events == ["enter", "generate", "exit"]
 
 
+def test_transformers_backend_reuses_cached_resized_images(tmp_path, monkeypatch) -> None:
+    from accident_vlm.modules.vlm_composer import TransformersQwenBackend
+
+    opened = []
+
+    class FakeImage:
+        def convert(self, mode):
+            return self
+
+        def thumbnail(self, size):
+            self.size = size
+
+    class FakeImageModule:
+        @staticmethod
+        def open(path):
+            opened.append(str(path))
+            return FakeImage()
+
+    image_path = tmp_path / "frame.jpg"
+    image_path.write_bytes(b"image")
+    backend = object.__new__(TransformersQwenBackend)
+    backend._image_cls = FakeImageModule
+    backend._image_cache = {}
+    monkeypatch.setenv("ACCIDENT_VLM_IMAGE_MAX_SIDE", "640")
+
+    first = backend._load_image(str(image_path))
+    second = backend._load_image(str(image_path))
+
+    assert first is second
+    assert opened == [str(image_path)]
+
+
+def test_transformers_backend_image_cache_respects_max_side(tmp_path, monkeypatch) -> None:
+    from accident_vlm.modules.vlm_composer import TransformersQwenBackend
+
+    opened = []
+
+    class FakeImage:
+        def convert(self, mode):
+            return self
+
+        def thumbnail(self, size):
+            self.size = size
+
+    class FakeImageModule:
+        @staticmethod
+        def open(path):
+            opened.append(str(path))
+            return FakeImage()
+
+    image_path = tmp_path / "frame.jpg"
+    image_path.write_bytes(b"image")
+    backend = object.__new__(TransformersQwenBackend)
+    backend._image_cls = FakeImageModule
+    backend._image_cache = {}
+
+    monkeypatch.setenv("ACCIDENT_VLM_IMAGE_MAX_SIDE", "640")
+    backend._load_image(str(image_path))
+    monkeypatch.setenv("ACCIDENT_VLM_IMAGE_MAX_SIDE", "512")
+    backend._load_image(str(image_path))
+
+    assert opened == [str(image_path), str(image_path)]
+
+
 def test_disable_transformers_allocator_warmup_patches_and_restores(monkeypatch) -> None:
     import types
 
