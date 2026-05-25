@@ -119,11 +119,7 @@ def assess_evidence_image_quality(path: Any) -> dict[str, Any]:
 def rank_evidence_images(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return sorted(
         [score_evidence_image(record) for record in records],
-        key=lambda record: (
-            -int(record.get("importance_score", 0)),
-            str(record.get("frame_id") or ""),
-            str(record.get("id") or ""),
-        ),
+        key=_evidence_sort_key,
     )
 
 
@@ -134,7 +130,11 @@ def summarize_evidence_images(records: list[dict[str, Any]]) -> dict[str, Any]:
         str(record.get("evidence_quality", {}).get("analysis_reliability") or record.get("quality_confidence") or "unknown")
         for record in records
     )
-    top_records = rank_evidence_images(records)[:10]
+    top_records = (
+        sorted((deepcopy(record) for record in records), key=_evidence_sort_key)[:10]
+        if all("importance_score" in record for record in records)
+        else rank_evidence_images(records)[:10]
+    )
     return {
         "total_images": len(records),
         "purpose_counts": dict(purpose_counter),
@@ -150,3 +150,11 @@ def summarize_evidence_images(records: list[dict[str, Any]]) -> dict[str, Any]:
             for record in top_records
         ],
     }
+
+
+def _evidence_sort_key(record: dict[str, Any]) -> tuple[int, str, str]:
+    return (
+        -int(record.get("importance_score", 0)),
+        str(record.get("frame_id") or ""),
+        str(record.get("id") or ""),
+    )

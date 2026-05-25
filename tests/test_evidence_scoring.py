@@ -1,7 +1,11 @@
 import cv2
 import numpy as np
 
-from accident_vlm.modules.evidence_scoring import rank_evidence_images, score_evidence_image
+from accident_vlm.modules.evidence_scoring import (
+    rank_evidence_images,
+    score_evidence_image,
+    summarize_evidence_images,
+)
 
 
 def test_score_evidence_image_adds_quality_metrics_and_penalty(tmp_path):
@@ -40,3 +44,29 @@ def test_rank_evidence_images_keeps_quality_metrics(tmp_path):
     )
 
     assert ranked[0]["evidence_quality"]["brightness"] == "normal"
+
+
+def test_summarize_evidence_images_reuses_existing_scores(monkeypatch):
+    def fail_score(record):
+        raise AssertionError("pre-ranked records should not be scored again")
+
+    monkeypatch.setattr("accident_vlm.modules.evidence_scoring.score_evidence_image", fail_score)
+
+    summary = summarize_evidence_images(
+        [
+            {
+                "id": "low",
+                "purpose": "regular_context",
+                "source": "selected_frame",
+                "importance_score": 10,
+            },
+            {
+                "id": "high",
+                "purpose": "actor_crop",
+                "source": "visual_evidence",
+                "importance_score": 90,
+            },
+        ]
+    )
+
+    assert [item["id"] for item in summary["top_evidence"]] == ["high", "low"]
