@@ -279,18 +279,29 @@ def extract_selected_frames(
     output_dir: Path,
 ) -> list[SelectedFrame]:
     output_dir.mkdir(parents=True, exist_ok=True)
+    extracted_by_id: dict[str, SelectedFrame] = {}
+    frames_to_extract: list[SelectedFrame] = []
+    for frame in selected_frames:
+        frame_path = output_dir / f"{frame.id}.jpg"
+        if frame.path and Path(frame.path) == frame_path and frame_path.exists():
+            extracted_by_id[frame.id] = frame
+        else:
+            frames_to_extract.append(frame)
+
+    if not frames_to_extract:
+        return [extracted_by_id[frame.id] for frame in selected_frames if frame.id in extracted_by_id]
+
     capture = cv2.VideoCapture(str(video_path))
     if not capture.isOpened():
         raise ValueError(f"cannot open video: {video_path}")
 
     frames_by_index: dict[int, list[SelectedFrame]] = {}
-    for frame in selected_frames:
+    for frame in frames_to_extract:
         frames_by_index.setdefault(frame.frame_index, []).append(frame)
     if not frames_by_index:
         capture.release()
         return []
 
-    extracted_by_id: dict[str, SelectedFrame] = {}
     try:
         for target_frame, image in iter_capture_frames_at_indices(
             capture,
