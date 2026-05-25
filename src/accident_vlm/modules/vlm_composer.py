@@ -1,5 +1,6 @@
 import ast
 import base64
+import importlib.util
 import json
 import mimetypes
 import os
@@ -62,7 +63,7 @@ Required analysis discipline:
 """.strip()
 
 
-LOCAL_QWEN_MODEL_ID = "/home/minsung0830/accident-vlm/models/Qwen3.6-27B"
+LOCAL_QWEN_MODEL_ID = "/home/minsung0830/accident-vlm/models/Qwen3.6-27B-AWQ-INT4"
 QWEN_MODEL_ALIASES = {
     "Qwen/Qwen3.6-27B": LOCAL_QWEN_MODEL_ID,
 }
@@ -403,6 +404,10 @@ def _final_max_new_tokens() -> int:
     return int(os.getenv("ACCIDENT_VLM_FINAL_MAX_NEW_TOKENS", "1024"))
 
 
+def _use_generation_cache() -> bool:
+    return os.getenv("ACCIDENT_VLM_USE_CACHE", "1").lower() in {"1", "true", "yes", "on"}
+
+
 def _image_chunk_size() -> int:
     return int(os.getenv("ACCIDENT_VLM_IMAGE_CHUNK_SIZE", "4"))
 
@@ -572,6 +577,7 @@ class TransformersQwenBackend:
         except ImportError as exc:
             raise RuntimeError("install accident-vlm[vlm] on the server to use Qwen backend") from exc
 
+        _prepare_transformers_runtime_env()
         self._image_cls = Image
         self._processor = AutoProcessor.from_pretrained(model_id, trust_remote_code=True)
         _configure_transformers_loading(modeling_utils)
@@ -580,6 +586,7 @@ class TransformersQwenBackend:
             "dtype": _model_dtype(),
             "low_cpu_mem_usage": True,
             "trust_remote_code": True,
+            "attn_implementation": _attn_implementation(),
         }
         max_memory = _parse_max_memory(os.getenv("ACCIDENT_VLM_MAX_MEMORY"))
         if max_memory:
@@ -682,7 +689,7 @@ class TransformersQwenBackend:
         inputs = inputs.to(self._model.device)
         if max_new_tokens is None:
             max_new_tokens = _final_max_new_tokens()
-        use_cache = os.getenv("ACCIDENT_VLM_USE_CACHE", "0").lower() in {"1", "true", "yes", "on"}
+        use_cache = _use_generation_cache()
         try:
             import torch  # type: ignore
 
@@ -988,6 +995,25 @@ def _parse_max_memory(raw_value: str | None) -> dict[Any, str]:
             normalized_key = int(normalized_key)
         max_memory[normalized_key] = value.strip()
     return max_memory
+
+
+def _prepare_transformers_runtime_env() -> None:
+    tmp_root = os.getenv("ACCIDENT_VLM_TMP_ROOT", "/tmp")
+    hf_home = os.path.join(tmp_root, "accident-vlm-hf")
+    os.environ.setdefault("TMPDIR", tmp_root)
+    os.environ.setdefault("HF_HOME", hf_home)
+    os.environ.setdefault("TRANSFORMERS_CACHE", os.path.join(hf_home, "transformers"))
+    os.environ.setdefault("HF_HUB_CACHE", os.path.join(hf_home, "hub"))
+    os.environ.setdefault("TORCHINDUCTOR_CACHE_DIR", os.path.join(tmp_root, "accident-vlm-torchinductor"))
+
+
+def _attn_implementation() -> str:
+    override = os.getenv("ACCIDENT_VLM_ATTN_IMPLEMENTATION", "").strip()
+    if override:
+        return override
+    if importlib.util.find_spec("flash_attn") is not None:
+        return "flash_attention_2"
+    return "sdpa"
 
 
 def _model_dtype() -> str:

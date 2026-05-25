@@ -25,6 +25,9 @@ from accident_vlm.modules.vlm_composer import (
     _read_http_error_detail,
     _model_dtype,
     _parse_max_memory,
+    _prepare_transformers_runtime_env,
+    _attn_implementation,
+    _use_generation_cache,
 )
 from accident_vlm.schemas.preprocessing import PipelineContext
 
@@ -784,6 +787,48 @@ def test_parse_max_memory_accepts_gpu_and_cpu_entries() -> None:
     }
 
 
+def test_qwen_alias_maps_to_local_awq_int4_model() -> None:
+    assert normalize_model_id("Qwen/Qwen3.6-27B") == "/home/minsung0830/accident-vlm/models/Qwen3.6-27B-AWQ-INT4"
+
+
+def test_prepare_transformers_runtime_env_defaults_to_tmp_cache(monkeypatch) -> None:
+    for key in ("TMPDIR", "HF_HOME", "TRANSFORMERS_CACHE", "HF_HUB_CACHE", "TORCHINDUCTOR_CACHE_DIR"):
+        monkeypatch.delenv(key, raising=False)
+
+    _prepare_transformers_runtime_env()
+
+    assert __import__("os").environ["TMPDIR"] == "/tmp"
+    assert __import__("os").environ["HF_HOME"] == "/tmp/accident-vlm-hf"
+    assert __import__("os").environ["TRANSFORMERS_CACHE"] == "/tmp/accident-vlm-hf/transformers"
+    assert __import__("os").environ["HF_HUB_CACHE"] == "/tmp/accident-vlm-hf/hub"
+    assert __import__("os").environ["TORCHINDUCTOR_CACHE_DIR"] == "/tmp/accident-vlm-torchinductor"
+
+
+def test_attn_implementation_defaults_to_sdpa_without_flash_attn(monkeypatch) -> None:
+    monkeypatch.delenv("ACCIDENT_VLM_ATTN_IMPLEMENTATION", raising=False)
+    monkeypatch.setattr("importlib.util.find_spec", lambda name: None)
+
+    assert _attn_implementation() == "sdpa"
+
+
+def test_attn_implementation_can_be_overridden(monkeypatch) -> None:
+    monkeypatch.setenv("ACCIDENT_VLM_ATTN_IMPLEMENTATION", "eager")
+
+    assert _attn_implementation() == "eager"
+
+
+def test_generation_cache_defaults_on_for_decode_speed(monkeypatch) -> None:
+    monkeypatch.delenv("ACCIDENT_VLM_USE_CACHE", raising=False)
+
+    assert _use_generation_cache() is True
+
+
+def test_generation_cache_can_be_disabled_for_memory_pressure(monkeypatch) -> None:
+    monkeypatch.setenv("ACCIDENT_VLM_USE_CACHE", "0")
+
+    assert _use_generation_cache() is False
+
+
 def test_model_dtype_defaults_to_bfloat16_for_quantized_models(monkeypatch) -> None:
     monkeypatch.delenv("ACCIDENT_VLM_MODEL_DTYPE", raising=False)
 
@@ -840,7 +885,7 @@ def test_compose_with_retry_clears_cuda_cache_after_failed_attempt(monkeypatch) 
 
 
 def test_normalize_model_id_maps_qwen_alias_to_local_model() -> None:
-    assert normalize_model_id("Qwen/Qwen3.6-27B") == "/home/minsung0830/accident-vlm/models/Qwen3.6-27B"
+    assert normalize_model_id("Qwen/Qwen3.6-27B") == "/home/minsung0830/accident-vlm/models/Qwen3.6-27B-AWQ-INT4"
 
 
 def test_get_qwen_backend_reuses_local_model_for_qwen_alias(monkeypatch) -> None:
@@ -856,11 +901,11 @@ def test_get_qwen_backend_reuses_local_model_for_qwen_alias(monkeypatch) -> None
     )
     get_qwen_backend.cache_clear()
 
-    first = get_qwen_backend("/home/minsung0830/accident-vlm/models/Qwen3.6-27B", "auto")
+    first = get_qwen_backend("/home/minsung0830/accident-vlm/models/Qwen3.6-27B-AWQ-INT4", "auto")
     second = get_qwen_backend("Qwen/Qwen3.6-27B", "auto")
 
     assert first is second
-    assert created == [("/home/minsung0830/accident-vlm/models/Qwen3.6-27B", "auto")]
+    assert created == [("/home/minsung0830/accident-vlm/models/Qwen3.6-27B-AWQ-INT4", "auto")]
 
 
 def test_normalize_device_pins_backend_to_auto_by_default(monkeypatch) -> None:
@@ -886,10 +931,10 @@ def test_get_qwen_backend_reuses_instance_across_device_aliases(monkeypatch) -> 
     get_qwen_backend.cache_clear()
 
     first = get_qwen_backend("Qwen/Qwen3.6-27B", "cuda:0")
-    second = get_qwen_backend("/home/minsung0830/accident-vlm/models/Qwen3.6-27B", "balanced_low_0")
+    second = get_qwen_backend("/home/minsung0830/accident-vlm/models/Qwen3.6-27B-AWQ-INT4", "balanced_low_0")
 
     assert first is second
-    assert created == [("/home/minsung0830/accident-vlm/models/Qwen3.6-27B", "auto")]
+    assert created == [("/home/minsung0830/accident-vlm/models/Qwen3.6-27B-AWQ-INT4", "auto")]
 
 
 def test_disable_transformers_allocator_warmup_patches_and_restores(monkeypatch) -> None:
