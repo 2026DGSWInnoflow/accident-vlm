@@ -243,3 +243,61 @@ def test_build_event_segments_clamps_to_video_bounds_and_skips_unknown_time() ->
 
     assert segments[0]["start"] == "00:00.000"
     assert segments[0]["end"] == "00:02.000"
+
+
+def test_select_motion_keyframes_scans_forward_without_random_seeks(monkeypatch, tmp_path) -> None:
+    frames = []
+    for index in range(6):
+        image = np.zeros((48, 64, 3), dtype=np.uint8)
+        if index >= 4:
+            image[:, :] = 255
+        frames.append(image)
+
+    captures = []
+
+    class FakeCapture:
+        def __init__(self, path):
+            self.index = 0
+            self.set_calls = []
+            captures.append(self)
+
+        def isOpened(self):
+            return True
+
+        def set(self, prop, value):
+            self.set_calls.append((prop, value))
+            self.index = int(value)
+            return True
+
+        def grab(self):
+            self.index += 1
+            return self.index <= len(frames)
+
+        def read(self):
+            if self.index >= len(frames):
+                return False, None
+            image = frames[self.index]
+            self.index += 1
+            return True, image
+
+        def release(self):
+            pass
+
+    monkeypatch.setattr(cv2, "VideoCapture", FakeCapture)
+
+    selected = select_motion_keyframes(
+        tmp_path / "fake.mp4",
+        metadata=VideoMetadata(
+            duration_sec=0.6,
+            fps=10,
+            resolution="64x48",
+            frame_count=len(frames),
+            has_audio=False,
+        ),
+        sample_interval_sec=0.2,
+        max_frames=2,
+        min_change_score=20.0,
+    )
+
+    assert captures[0].set_calls == []
+    assert selected

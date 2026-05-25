@@ -6,6 +6,7 @@ import cv2
 from accident_vlm.schemas.preprocessing import SelectedFrame
 from accident_vlm.schemas.preprocessing import VideoMetadata
 from accident_vlm.utils.timecode import frame_to_timecode, parse_timecode, seconds_to_timecode
+from accident_vlm.modules.video_sampling import iter_sampled_capture_frames
 
 
 def _floor_decimal(value: Decimal) -> int:
@@ -85,11 +86,11 @@ def select_motion_keyframes(
     previous_gray = None
     scored_frames: list[tuple[float, int]] = []
     try:
-        for frame_index in range(0, metadata.frame_count, sample_step):
-            capture.set(cv2.CAP_PROP_POS_FRAMES, frame_index)
-            ok, image = capture.read()
-            if not ok:
-                continue
+        for frame_index, image in iter_sampled_capture_frames(
+            capture,
+            metadata.frame_count,
+            sample_step,
+        ):
             gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
             gray = cv2.resize(gray, (160, 90), interpolation=cv2.INTER_AREA)
             if previous_gray is not None:

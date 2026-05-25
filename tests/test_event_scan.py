@@ -122,3 +122,61 @@ def test_build_frame_selection_contact_sheet_writes_review_image(tmp_path):
     assert record["purpose"] == "frame_selection_contact_sheet"
     assert record["path"].endswith("contact_sheet.jpg")
     assert cv2.imread(record["path"]) is not None
+
+
+def test_scan_video_event_candidates_scans_forward_without_random_seeks(monkeypatch, tmp_path):
+    frames = []
+    for index in range(8):
+        image = np.zeros((64, 96, 3), dtype=np.uint8)
+        if index >= 4:
+            image[16:48, 32:64] = 255
+        frames.append(image)
+
+    captures = []
+
+    class FakeCapture:
+        def __init__(self, path):
+            self.index = 0
+            self.set_calls = []
+            captures.append(self)
+
+        def isOpened(self):
+            return True
+
+        def set(self, prop, value):
+            self.set_calls.append((prop, value))
+            self.index = int(value)
+            return True
+
+        def grab(self):
+            self.index += 1
+            return self.index <= len(frames)
+
+        def read(self):
+            if self.index >= len(frames):
+                return False, None
+            image = frames[self.index]
+            self.index += 1
+            return True, image
+
+        def release(self):
+            pass
+
+    monkeypatch.setattr(cv2, "VideoCapture", FakeCapture)
+
+    candidates = scan_video_event_candidates(
+        tmp_path / "fake.mp4",
+        VideoMetadata(
+            duration_sec=0.8,
+            fps=10,
+            resolution="96x64",
+            frame_count=len(frames),
+            has_audio=False,
+        ),
+        sample_fps=5.0,
+        top_k=3,
+        min_score=1.0,
+    )
+
+    assert captures[0].set_calls == []
+    assert candidates
