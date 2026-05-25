@@ -937,6 +937,67 @@ def test_get_qwen_backend_reuses_instance_across_device_aliases(monkeypatch) -> 
     assert created == [("/home/minsung0830/accident-vlm/models/Qwen3.6-27B-AWQ-INT4", "auto")]
 
 
+def test_transformers_backend_generation_uses_global_lock(monkeypatch) -> None:
+    events = []
+
+    class FakeLock:
+        def __enter__(self):
+            events.append("enter")
+
+        def __exit__(self, exc_type, exc, tb):
+            events.append("exit")
+
+    class FakeBackend:
+        _generate_lock = FakeLock()
+
+        def _generate_text(self):
+            from accident_vlm.modules.vlm_composer import TransformersQwenBackend
+
+            return TransformersQwenBackend._generate_text(
+                self,
+                prompt="prompt",
+                images=[],
+                image_paths=[],
+                max_new_tokens=1,
+            )
+
+    class FakeInputIds:
+        shape = (1, 3)
+
+    class FakeInputs(dict):
+        input_ids = FakeInputIds()
+
+        def to(self, device):
+            return self
+
+    class FakeProcessor:
+        def __call__(self, **kwargs):
+            return FakeInputs()
+
+        def batch_decode(self, values, skip_special_tokens=True):
+            return ["{}"]
+
+    class FakeGenerated:
+        def __getitem__(self, item):
+            return [[4]]
+
+    class FakeModel:
+        device = "cpu"
+
+        def generate(self, **kwargs):
+            events.append("generate")
+            return FakeGenerated()
+
+    backend = FakeBackend()
+    backend._processor = FakeProcessor()
+    backend._model = FakeModel()
+    monkeypatch.setattr("accident_vlm.modules.vlm_composer.render_qwen_chat_template", lambda processor, messages: "chat")
+
+    backend._generate_text()
+
+    assert events == ["enter", "generate", "exit"]
+
+
 def test_disable_transformers_allocator_warmup_patches_and_restores(monkeypatch) -> None:
     import types
 

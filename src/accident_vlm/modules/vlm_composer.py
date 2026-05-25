@@ -597,6 +597,7 @@ class TransformersQwenBackend:
                 **model_kwargs,
             )
         self._model.eval()
+        self._generate_lock = Lock()
 
     def generate_json(
         self,
@@ -693,7 +694,7 @@ class TransformersQwenBackend:
         try:
             import torch  # type: ignore
 
-            with torch.inference_mode():
+            with torch.inference_mode(), self._generate_lock:
                 generated_ids = self._model.generate(
                     **inputs,
                     max_new_tokens=max_new_tokens,
@@ -701,12 +702,13 @@ class TransformersQwenBackend:
                     use_cache=use_cache,
                 )
         except ImportError:
-            generated_ids = self._model.generate(
-                **inputs,
-                max_new_tokens=max_new_tokens,
-                do_sample=False,
-                use_cache=use_cache,
-            )
+            with self._generate_lock:
+                generated_ids = self._model.generate(
+                    **inputs,
+                    max_new_tokens=max_new_tokens,
+                    do_sample=False,
+                    use_cache=use_cache,
+                )
         return self._processor.batch_decode(
             generated_ids[:, inputs.input_ids.shape[1] :],
             skip_special_tokens=True,
