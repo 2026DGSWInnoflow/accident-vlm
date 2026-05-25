@@ -7,6 +7,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from accident_vlm.modules.image_io import read_cv_image
 from accident_vlm.schemas.preprocessing import SelectedFrame
 
 
@@ -55,7 +56,7 @@ def analyze_traffic_control(
     for frame in selected_frames[:20]:
         if not frame.path:
             continue
-        image = cv2.imread(frame.path)
+        image = read_cv_image(frame.path)
         if image is None:
             continue
         frame_has_lit_signal = False
@@ -195,7 +196,7 @@ def analyze_traffic_control(
         if output_dir and selected_frames:
             first_frame = next((frame for frame in selected_frames if frame.path), None)
             if first_frame:
-                image = cv2.imread(first_frame.path)
+                image = read_cv_image(first_frame.path)
                 if image is not None:
                     height = image.shape[0]
                     failure_path = output_dir / "failure_cases" / f"{first_frame.id}_traffic_light_not_detected.jpg"

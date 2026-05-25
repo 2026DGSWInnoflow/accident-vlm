@@ -5,6 +5,7 @@ from html import escape
 
 import cv2
 
+from accident_vlm.modules.image_io import read_cv_image
 from accident_vlm.schemas.preprocessing import SelectedFrame
 
 
@@ -31,7 +32,7 @@ def build_visual_evidence(
         frame = frame_by_id.get(frame_id)
         if not frame or not frame.path:
             continue
-        image = cv2.imread(frame.path)
+        image = read_cv_image(frame.path)
         if image is None:
             continue
         overlay = image.copy()
@@ -133,7 +134,7 @@ def build_event_evidence_overlays(
         rendered_images = []
         for frame_id in evidence_ids[:2]:
             frame = frames_by_id[frame_id]
-            image = cv2.imread(frame.path)
+            image = read_cv_image(frame.path)
             if image is None:
                 continue
             overlay = image.copy()

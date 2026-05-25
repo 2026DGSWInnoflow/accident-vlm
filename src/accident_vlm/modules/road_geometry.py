@@ -5,6 +5,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from accident_vlm.modules.image_io import read_cv_image
 from accident_vlm.schemas.preprocessing import SelectedFrame
 
 
@@ -38,7 +39,7 @@ def analyze_road_geometry(
     for frame in selected_frames[:20]:
         if not frame.path:
             continue
-        image = cv2.imread(frame.path)
+        image = read_cv_image(frame.path)
         if image is None:
             failure_reasons.append(f"{frame.id}: image_read_failed")
             continue

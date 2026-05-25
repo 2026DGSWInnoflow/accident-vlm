@@ -8,6 +8,7 @@ from typing import Protocol
 import cv2
 
 from accident_vlm.modules.frame_selection import extract_selected_frames
+from accident_vlm.modules.image_io import read_cv_image
 from accident_vlm.schemas.preprocessing import SelectedFrame
 from accident_vlm.utils.timecode import frame_to_timecode, parse_timecode
 
@@ -198,7 +199,7 @@ def _movement_from_points(first: tuple[float, float], last: tuple[float, float])
 
 
 def _read_frame_shape(image_path: Path) -> tuple[int, int] | None:
-    image = cv2.imread(str(image_path))
+    image = read_cv_image(image_path)
     if image is None:
         return None
     height, width = image.shape[:2]

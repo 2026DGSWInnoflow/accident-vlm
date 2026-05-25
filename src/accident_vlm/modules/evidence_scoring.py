@@ -8,6 +8,8 @@ from typing import Any
 import cv2
 import numpy as np
 
+from accident_vlm.modules.image_io import read_cv_image
+
 
 PURPOSE_BASE_SCORES = {
     "traffic_light_crop": 96,
@@ -81,7 +83,7 @@ def assess_evidence_image_quality(path: Any) -> dict[str, Any]:
     image_path = Path(str(path))
     if not image_path.exists():
         return {}
-    image = cv2.imread(str(image_path))
+    image = read_cv_image(image_path)
     if image is None:
         return {}
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)

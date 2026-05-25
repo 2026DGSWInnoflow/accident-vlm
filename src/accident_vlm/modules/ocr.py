@@ -11,6 +11,7 @@ from typing import Protocol
 import cv2
 import numpy as np
 
+from accident_vlm.modules.image_io import read_cv_image
 from accident_vlm.schemas.preprocessing import SelectedFrame
 
 
@@ -51,7 +52,7 @@ class TesseractOcrBackend:
         self._pytesseract = pytesseract
 
     def read_text(self, image_path: Path, field_hint: str | None = None) -> list[dict]:
-        image = cv2.imread(str(image_path))
+        image = read_cv_image(image_path)
         if image is None:
             return []
         rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
@@ -256,7 +257,7 @@ def extract_ocr_observations(
     for frame in selected_frames:
         if not frame.path:
             continue
-        image = cv2.imread(frame.path)
+        image = read_cv_image(frame.path)
         if image is None:
             continue
         for roi in build_overlay_rois(image):

@@ -6,6 +6,7 @@ from typing import Any
 import cv2
 import numpy as np
 
+from accident_vlm.modules.image_io import read_cv_image
 from accident_vlm.schemas.preprocessing import SelectedFrame, VideoMetadata
 from accident_vlm.utils.timecode import frame_to_timecode, parse_timecode, seconds_to_timecode
 from accident_vlm.modules.video_sampling import iter_sampled_capture_frames
@@ -348,7 +349,7 @@ def build_frame_selection_contact_sheet(
     for frame in selected_frames:
         if not frame.path:
             continue
-        image = cv2.imread(frame.path)
+        image = read_cv_image(frame.path)
         if image is None:
             continue
         height, width = image.shape[:2]
