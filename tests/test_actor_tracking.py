@@ -3,6 +3,7 @@ from pathlib import Path
 from accident_vlm.modules.actor_tracking import (
     ACCIDENT_ACTOR_TAXONOMY,
     Detection,
+    NoObjectDetector,
     UltralyticsTracker,
     compare_tracker_outputs,
     detect_and_track_actors,
@@ -141,6 +142,30 @@ def test_detect_and_track_actors_uses_batch_detector_when_available(monkeypatch)
     assert len(tracks[0]["positions"]) == 2
 
 
+def test_detect_and_track_actors_skips_frame_reads_for_disabled_detector(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "accident_vlm.modules.actor_tracking._read_frame_shape",
+        lambda path: (_ for _ in ()).throw(
+            AssertionError("disabled detector should not read frame images")
+        ),
+    )
+
+    tracks = detect_and_track_actors(
+        [
+            SelectedFrame(
+                id="frame_000001",
+                time="00:00.033",
+                frame_index=1,
+                purpose="regular_context",
+                path="/tmp/frame1.jpg",
+            )
+        ],
+        NoObjectDetector(),
+    )
+
+    assert tracks == []
+
+
 def test_detect_and_track_segments_extracts_dense_segment_frames(monkeypatch, tmp_path) -> None:
     calls = {}
 
@@ -176,6 +201,25 @@ def test_detect_and_track_segments_extracts_dense_segment_frames(monkeypatch, tm
     assert calls["indices"] == [10, 11, 12, 13]
     assert tracks[0]["source_stage"] == "segment_tracking"
     assert len(tracks[0]["positions"]) == 4
+
+
+def test_detect_and_track_segments_skips_extraction_for_disabled_detector(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(
+        "accident_vlm.modules.actor_tracking.extract_selected_frames",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("disabled detector should not extract segment frames")
+        ),
+    )
+
+    tracks = detect_and_track_segments(
+        video_path=Path("/tmp/video.mp4"),
+        selected_segments=[{"id": "seg_event_001", "start": "00:01.000", "end": "00:01.300"}],
+        fps=10,
+        detector=NoObjectDetector(),
+        output_dir=tmp_path / "segments",
+    )
+
+    assert tracks == []
 
 
 def test_detect_and_track_segments_caps_total_extracted_frames(monkeypatch, tmp_path) -> None:

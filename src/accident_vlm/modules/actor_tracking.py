@@ -233,6 +233,9 @@ def detect_and_track_actors(
     detector: ObjectDetector,
     max_match_distance_px: float = 120.0,
 ) -> list[dict]:
+    if getattr(detector, "name", "") == "none":
+        return []
+
     tracks: list[dict] = []
     next_track_index = 1
     frame_inputs: list[tuple[SelectedFrame, Path, tuple[int, int]]] = []
@@ -373,6 +376,8 @@ def detect_and_track_segments(
         raise ValueError("max_frames_per_segment must be positive")
     if max_total_frames is not None and max_total_frames <= 0:
         raise ValueError("max_total_frames must be positive")
+    if getattr(detector, "name", "") == "none":
+        return []
 
     segment_frames: list[SelectedFrame] = []
     for segment in selected_segments:
