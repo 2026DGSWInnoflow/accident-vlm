@@ -195,7 +195,7 @@ def _ego_motion_compensated_delta(previous_gray: np.ndarray, gray: np.ndarray) -
     return float(cv2.absdiff(warped, gray).mean()) / 255.0
 
 
-def _motion_gray(gray: np.ndarray, max_side: int = 96) -> np.ndarray:
+def _motion_gray(gray: np.ndarray, max_side: int = 64) -> np.ndarray:
     height, width = gray.shape[:2]
     longest_side = max(height, width)
     if longest_side <= max_side:

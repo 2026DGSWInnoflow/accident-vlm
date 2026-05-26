@@ -182,7 +182,7 @@ def test_analyze_input_quality_downscales_optical_flow_inputs(monkeypatch, tmp_p
     )
 
     assert flow_shapes
-    assert all(height <= 96 and width <= 96 for height, width in flow_shapes)
+    assert all(height <= 64 and width <= 64 for height, width in flow_shapes)
 
 
 def test_analyze_input_quality_avoids_numpy_percentile_for_contrast(monkeypatch, tmp_path) -> None:
