@@ -50,3 +50,20 @@ def test_read_cv_image_cache_returns_mutation_safe_copy(monkeypatch, tmp_path) -
 
     assert second is not None
     assert int(second[0, 0, 0]) == 7
+
+
+def test_cache_cv_image_primes_read_cache(monkeypatch, tmp_path) -> None:
+    image_path = tmp_path / "frame.jpg"
+    image_path.write_bytes(b"fake")
+    image_io.clear_cv_image_cache()
+
+    def fail_imread(path, flags):
+        raise AssertionError("primed cache should avoid cv2.imread")
+
+    monkeypatch.setattr(cv2, "imread", fail_imread)
+
+    image_io.cache_cv_image(image_path, np.full((4, 4, 3), 11, dtype=np.uint8))
+    image = image_io.read_cv_image(image_path)
+
+    assert image is not None
+    assert int(image[0, 0, 0]) == 11

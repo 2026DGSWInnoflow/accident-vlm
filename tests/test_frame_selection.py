@@ -500,3 +500,44 @@ def test_extract_selected_frames_reuses_fresh_output_even_without_frame_path(mon
 
     assert captures == []
     assert extracted[0].path == str(existing_path)
+
+
+def test_extract_selected_frames_primes_image_cache_for_new_outputs(monkeypatch, tmp_path) -> None:
+    from accident_vlm.modules.frame_selection import extract_selected_frames
+
+    frames = [np.full((8, 8, 3), index, dtype=np.uint8) for index in range(4)]
+    cached = []
+
+    class FakeCapture:
+        def __init__(self, path):
+            self.index = 0
+
+        def isOpened(self):
+            return True
+
+        def grab(self):
+            self.index += 1
+            return self.index <= len(frames)
+
+        def read(self):
+            if self.index >= len(frames):
+                return False, None
+            image = frames[self.index]
+            self.index += 1
+            return True, image
+
+        def release(self):
+            pass
+
+    monkeypatch.setattr(cv2, "VideoCapture", FakeCapture)
+    monkeypatch.setattr(cv2, "imwrite", lambda path, image: True)
+    monkeypatch.setattr(
+        "accident_vlm.modules.frame_selection.cache_cv_image",
+        lambda path, image: cached.append((Path(path).name, int(image[0, 0, 0]))),
+    )
+
+    selected = [SelectedFrame(id="frame_000002", time="00:00.200", frame_index=2, purpose="new")]
+
+    extract_selected_frames(tmp_path / "fake.mp4", selected, tmp_path / "frames")
+
+    assert cached == [("frame_000002.jpg", 2)]

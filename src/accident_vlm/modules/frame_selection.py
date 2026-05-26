@@ -3,6 +3,7 @@ from pathlib import Path
 
 import cv2
 
+from accident_vlm.modules.image_io import cache_cv_image
 from accident_vlm.schemas.preprocessing import SelectedFrame
 from accident_vlm.schemas.preprocessing import VideoMetadata
 from accident_vlm.utils.timecode import frame_to_timecode, parse_timecode, seconds_to_timecode
@@ -312,7 +313,8 @@ def extract_selected_frames(
         ):
             for frame in frames_by_index[target_frame]:
                 frame_path = output_dir / f"{frame.id}.jpg"
-                cv2.imwrite(str(frame_path), image)
+                if cv2.imwrite(str(frame_path), image):
+                    cache_cv_image(frame_path, image)
                 extracted_by_id[frame.id] = frame.model_copy(update={"path": str(frame_path)})
     finally:
         capture.release()

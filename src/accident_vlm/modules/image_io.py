@@ -47,6 +47,28 @@ def clear_cv_image_cache() -> None:
     _IMAGE_CACHE.clear()
 
 
+def cache_cv_image(path: Any, image: np.ndarray, flags: int = cv2.IMREAD_COLOR) -> None:
+    if not path or image is None:
+        return
+    max_cached = _image_cache_size()
+    if max_cached <= 0:
+        return
+    image_path = Path(str(path))
+    try:
+        stat = image_path.stat()
+    except OSError:
+        return
+    cache_key = (
+        str(image_path.resolve()),
+        int(stat.st_mtime_ns),
+        int(stat.st_size),
+        int(flags),
+    )
+    _IMAGE_CACHE[cache_key] = image.copy()
+    while len(_IMAGE_CACHE) > max_cached:
+        _IMAGE_CACHE.pop(next(iter(_IMAGE_CACHE)))
+
+
 def _image_cache_size() -> int:
     try:
         return max(0, int(os.getenv("ACCIDENT_VLM_CV_IMAGE_CACHE_SIZE", "64")))
