@@ -1,12 +1,6 @@
 from pathlib import Path
 
 from accident_vlm.config import PipelineConfig
-from accident_vlm.modules.actor_tracking import (
-    compare_tracker_outputs,
-    create_object_detector,
-    detect_and_track_actors,
-    detect_and_track_segments,
-)
 from accident_vlm.modules.evidence_builder import build_evidence_package
 from accident_vlm.modules.evidence_visuals import build_event_evidence_overlays, build_visual_evidence
 from accident_vlm.modules.event_detection import detect_event_candidates
@@ -29,13 +23,47 @@ from accident_vlm.modules.ocr import (
     extract_ocr_observations,
     summarize_ocr_observations,
 )
-from accident_vlm.modules.road_geometry import analyze_road_geometry
 from accident_vlm.modules.scene import classify_scene_candidates
 from accident_vlm.modules.speed_distance import estimate_speed_and_distance
-from accident_vlm.modules.traffic_control import analyze_traffic_control
 from accident_vlm.modules.track_consolidation import consolidate_tracks
 from accident_vlm.modules.video_quality import analyze_input_quality
 from accident_vlm.schemas.preprocessing import PipelineContext, VideoMetadata
+
+
+def compare_tracker_outputs(*args, **kwargs):
+    from accident_vlm.modules.actor_tracking import compare_tracker_outputs as implementation
+
+    return implementation(*args, **kwargs)
+
+
+def create_object_detector(*args, **kwargs):
+    from accident_vlm.modules.actor_tracking import create_object_detector as implementation
+
+    return implementation(*args, **kwargs)
+
+
+def detect_and_track_actors(*args, **kwargs):
+    from accident_vlm.modules.actor_tracking import detect_and_track_actors as implementation
+
+    return implementation(*args, **kwargs)
+
+
+def detect_and_track_segments(*args, **kwargs):
+    from accident_vlm.modules.actor_tracking import detect_and_track_segments as implementation
+
+    return implementation(*args, **kwargs)
+
+
+def analyze_road_geometry(*args, **kwargs):
+    from accident_vlm.modules.road_geometry import analyze_road_geometry as implementation
+
+    return implementation(*args, **kwargs)
+
+
+def analyze_traffic_control(*args, **kwargs):
+    from accident_vlm.modules.traffic_control import analyze_traffic_control as implementation
+
+    return implementation(*args, **kwargs)
 
 
 def build_pre_vlm_context(

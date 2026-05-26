@@ -26,6 +26,30 @@ def test_build_pre_vlm_context_contains_regular_frames() -> None:
     assert context.evidence_package["precomputed_facts"]["metadata"]["fps"] == 30
 
 
+def test_pipeline_import_defers_heavy_optional_modules() -> None:
+    import subprocess
+    import sys
+
+    script = """
+import sys
+import accident_vlm.pipeline
+for name in (
+    "accident_vlm.modules.actor_tracking",
+    "accident_vlm.modules.road_geometry",
+    "accident_vlm.modules.traffic_control",
+):
+    print(name, name in sys.modules)
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "True" not in result.stdout
+
+
 def test_build_pre_vlm_context_omits_frames_for_zero_frame_metadata() -> None:
     context = build_pre_vlm_context(
         video_path="empty.mp4",
