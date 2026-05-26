@@ -1,7 +1,6 @@
 from pathlib import Path
 
 from accident_vlm.config import PipelineConfig
-from accident_vlm.modules.event_detection import detect_event_candidates
 from accident_vlm.modules.frame_selection import (
     build_event_segments,
     extract_selected_frames,
@@ -11,13 +10,6 @@ from accident_vlm.modules.frame_selection import (
     select_regular_frames,
 )
 from accident_vlm.modules.ingestion import probe_video
-from accident_vlm.modules.ocr import (
-    create_ocr_backend,
-    extract_ocr_observations,
-    summarize_ocr_observations,
-)
-from accident_vlm.modules.scene import classify_scene_candidates
-from accident_vlm.modules.speed_distance import estimate_speed_and_distance
 from accident_vlm.modules.track_consolidation import consolidate_tracks
 from accident_vlm.modules.video_quality import analyze_input_quality
 from accident_vlm.schemas.preprocessing import PipelineContext, VideoMetadata
@@ -59,6 +51,18 @@ def create_object_detector(*args, **kwargs):
     return implementation(*args, **kwargs)
 
 
+def create_ocr_backend(*args, **kwargs):
+    from accident_vlm.modules.ocr import create_ocr_backend as implementation
+
+    return implementation(*args, **kwargs)
+
+
+def detect_event_candidates(*args, **kwargs):
+    from accident_vlm.modules.event_detection import detect_event_candidates as implementation
+
+    return implementation(*args, **kwargs)
+
+
 def detect_and_track_actors(*args, **kwargs):
     from accident_vlm.modules.actor_tracking import detect_and_track_actors as implementation
 
@@ -67,6 +71,18 @@ def detect_and_track_actors(*args, **kwargs):
 
 def detect_and_track_segments(*args, **kwargs):
     from accident_vlm.modules.actor_tracking import detect_and_track_segments as implementation
+
+    return implementation(*args, **kwargs)
+
+
+def estimate_speed_and_distance(*args, **kwargs):
+    from accident_vlm.modules.speed_distance import estimate_speed_and_distance as implementation
+
+    return implementation(*args, **kwargs)
+
+
+def extract_ocr_observations(*args, **kwargs):
+    from accident_vlm.modules.ocr import extract_ocr_observations as implementation
 
     return implementation(*args, **kwargs)
 
@@ -83,6 +99,12 @@ def select_precision_event_frames(*args, **kwargs):
     return implementation(*args, **kwargs)
 
 
+def summarize_ocr_observations(*args, **kwargs):
+    from accident_vlm.modules.ocr import summarize_ocr_observations as implementation
+
+    return implementation(*args, **kwargs)
+
+
 def analyze_road_geometry(*args, **kwargs):
     from accident_vlm.modules.road_geometry import analyze_road_geometry as implementation
 
@@ -91,6 +113,12 @@ def analyze_road_geometry(*args, **kwargs):
 
 def analyze_traffic_control(*args, **kwargs):
     from accident_vlm.modules.traffic_control import analyze_traffic_control as implementation
+
+    return implementation(*args, **kwargs)
+
+
+def classify_scene_candidates(*args, **kwargs):
+    from accident_vlm.modules.scene import classify_scene_candidates as implementation
 
     return implementation(*args, **kwargs)
 
