@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 
-from accident_vlm.modules.traffic_control import analyze_traffic_control
+from accident_vlm.modules.traffic_control import _detect_off_signal_candidates, analyze_traffic_control
 from accident_vlm.schemas.preprocessing import SelectedFrame
 
 
@@ -150,3 +150,22 @@ def test_analyze_traffic_control_detects_off_signal_head(tmp_path) -> None:
     assert result["signal"]["value"] == "꺼짐"
     assert result["signal"]["visible"] is True
     assert result["signal"]["crops"]
+
+
+def test_detect_off_signal_candidates_uses_downscaled_hough_input(monkeypatch) -> None:
+    image = np.full((720, 1280, 3), 210, dtype=np.uint8)
+    cv2.circle(image, (640, 150), 28, (45, 45, 45), -1)
+    shapes = []
+    original_hough = cv2.HoughCircles
+
+    def record_hough(gray, *args, **kwargs):
+        shapes.append(gray.shape)
+        return original_hough(gray, *args, **kwargs)
+
+    monkeypatch.setattr(cv2, "HoughCircles", record_hough)
+
+    candidates = _detect_off_signal_candidates(image)
+
+    assert candidates
+    assert shapes
+    assert all(width <= 320 for _height, width in shapes)

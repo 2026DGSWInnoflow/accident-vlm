@@ -349,21 +349,23 @@ def _detect_signal_candidates(image: np.ndarray) -> list[dict]:
 def _detect_off_signal_candidates(image: np.ndarray) -> list[dict]:
     height, width = image.shape[:2]
     upper = image[: int(height * 0.45), :]
-    gray = cv2.cvtColor(upper, cv2.COLOR_BGR2GRAY)
+    detection_upper, detection_scale = _downscale_for_signal_detection(upper)
+    detection_height, detection_width = detection_upper.shape[:2]
+    gray = cv2.cvtColor(detection_upper, cv2.COLOR_BGR2GRAY)
     circles = cv2.HoughCircles(
         cv2.medianBlur(gray, 5),
         cv2.HOUGH_GRADIENT,
         dp=1.2,
-        minDist=20,
+        minDist=max(8, int(round(20 * detection_scale))),
         param1=40,
         param2=12,
-        minRadius=5,
-        maxRadius=max(8, min(width, height) // 12),
+        minRadius=max(3, int(round(5 * detection_scale))),
+        maxRadius=max(8, min(detection_width, detection_height) // 12),
     )
     candidates: list[dict] = []
     circle_values = [] if circles is None else circles[0, :]
     for x, y, radius in circle_values:
-        x_int, y_int, radius_int = int(round(x)), int(round(y)), int(round(radius))
+        x_int, y_int, radius_int = _scale_circle_to_source(x, y, radius, detection_scale)
         x1 = max(0, x_int - radius_int - 6)
         y1 = max(0, y_int - radius_int - 6)
         x2 = min(width, x_int + radius_int + 6)
@@ -388,15 +390,20 @@ def _detect_off_signal_candidates(image: np.ndarray) -> list[dict]:
     for contour in contours:
         x, y, w, h = cv2.boundingRect(contour)
         area = w * h
-        if area < 80 or area > width * height * 0.08:
+        min_area = max(12, int(round(80 * detection_scale * detection_scale)))
+        max_area = detection_width * detection_height * 0.08
+        if area < min_area or area > max_area:
             continue
         circularity = min(w, h) / max(w, h)
         if circularity < 0.55:
             continue
-        x1 = max(0, x - 6)
-        y1 = max(0, y - 6)
-        x2 = min(width, x + w + 6)
-        y2 = min(height, y + h + 6)
+        x1, y1, x2, y2 = _scale_bbox_to_source(
+            [x, y, x + w, y + h],
+            detection_scale,
+            width,
+            upper.shape[0],
+            padding=6,
+        )
         if any(abs(candidate["bbox"][0] - x1) < 8 and abs(candidate["bbox"][1] - y1) < 8 for candidate in candidates):
             continue
         crop = upper[y1:y2, x1:x2]
@@ -413,6 +420,45 @@ def _detect_off_signal_candidates(image: np.ndarray) -> list[dict]:
                 }
             )
     return candidates
+
+
+def _downscale_for_signal_detection(image: np.ndarray, max_width: int = 320) -> tuple[np.ndarray, float]:
+    height, width = image.shape[:2]
+    if width <= max_width:
+        return image, 1.0
+    scale = max_width / float(width)
+    resized = cv2.resize(
+        image,
+        (max_width, max(1, int(round(height * scale)))),
+        interpolation=cv2.INTER_AREA,
+    )
+    return resized, scale
+
+
+def _scale_circle_to_source(x: float, y: float, radius: float, scale: float) -> tuple[int, int, int]:
+    if scale == 1.0:
+        return int(round(x)), int(round(y)), int(round(radius))
+    inv = 1.0 / scale
+    return int(round(x * inv)), int(round(y * inv)), int(round(radius * inv))
+
+
+def _scale_bbox_to_source(
+    bbox: list[int],
+    scale: float,
+    width: int,
+    height: int,
+    padding: int = 0,
+) -> list[int]:
+    x1, y1, x2, y2 = bbox
+    if scale != 1.0:
+        inv = 1.0 / scale
+        x1, y1, x2, y2 = [int(round(value * inv)) for value in bbox]
+    return [
+        max(0, min(width - 1, x1 - padding)),
+        max(0, min(height - 1, y1 - padding)),
+        max(0, min(width, x2 + padding)),
+        max(0, min(height, y2 + padding)),
+    ]
 
 
 def _classify_signal_shape(image: np.ndarray, color: str) -> str:
