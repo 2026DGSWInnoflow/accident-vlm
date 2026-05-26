@@ -11,6 +11,8 @@ from accident_vlm.modules.video_sampling import (
     iter_sampled_capture_frames,
 )
 
+_MOTION_DIFF_SIZE = (96, 54)
+
 
 def _floor_decimal(value: Decimal) -> int:
     return int(value.to_integral_value(rounding=ROUND_FLOOR))
@@ -95,7 +97,7 @@ def select_motion_keyframes(
             sample_step,
         ):
             gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-            gray = cv2.resize(gray, (160, 90), interpolation=cv2.INTER_AREA)
+            gray = cv2.resize(gray, _MOTION_DIFF_SIZE, interpolation=cv2.INTER_AREA)
             if previous_gray is not None:
                 score = float(cv2.absdiff(gray, previous_gray).mean())
                 if score >= min_change_score:

@@ -2,7 +2,7 @@ from accident_vlm.modules.evidence_builder import build_evidence_package
 from accident_vlm.pipeline import build_pre_vlm_context
 from accident_vlm.pipeline import analyze_video_pre_vlm
 from accident_vlm.config import PipelineConfig
-from accident_vlm.schemas.preprocessing import PipelineContext, SelectedFrame, VideoMetadata
+from accident_vlm.schemas.preprocessing import InputQuality, PipelineContext, SelectedFrame, VideoMetadata
 from accident_vlm.modules.track_consolidation import consolidate_tracks
 
 
@@ -290,6 +290,61 @@ def test_build_evidence_package_caps_repetitive_roi_and_signal_images() -> None:
     assert purposes.count("traffic_light_crop") <= 12
     assert purposes.count("ocr_roi") <= 24
     assert purposes.count("event_window_context") == 8
+
+
+def test_build_evidence_package_reuses_input_quality_for_selected_frames(monkeypatch, tmp_path) -> None:
+    frame_path = tmp_path / "frame_000001.jpg"
+    frame_path.write_bytes(b"already analyzed")
+    monkeypatch.setattr(
+        "accident_vlm.modules.evidence_scoring.read_cv_image",
+        lambda path: (_ for _ in ()).throw(
+            AssertionError("selected frame quality should reuse input_quality timeline")
+        ),
+    )
+    context = PipelineContext(
+        video_path="sample.mp4",
+        video_metadata=VideoMetadata(
+            duration_sec=1.0,
+            fps=10,
+            resolution="640x480",
+            frame_count=10,
+            has_audio=False,
+        ),
+        input_quality=InputQuality(
+            blur="low",
+            brightness="normal",
+            night_noise="low",
+            camera_shake="low",
+            occlusion="unknown",
+            analysis_reliability="high",
+            timeline=[
+                {
+                    "frame_id": "frame_000001",
+                    "blur_score": 400.0,
+                    "brightness_score": 128.0,
+                    "noise_score": 10.0,
+                    "glare_ratio": 0.0,
+                    "contrast_score": 80.0,
+                    "quality_flags": [],
+                }
+            ],
+        ),
+        selected_frames=[
+            SelectedFrame(
+                id="frame_000001",
+                time="00:00.100",
+                frame_index=1,
+                path=str(frame_path),
+                purpose="regular_context",
+            )
+        ],
+    )
+
+    evidence_package = build_evidence_package(context)
+
+    quality = evidence_package["evidence_images"][0]["evidence_quality"]
+    assert quality["analysis_reliability"] == "high"
+    assert quality["brightness_score"] == 128.0
 
 
 def test_analyze_video_pre_vlm_merges_motion_keyframes_before_extraction(

@@ -54,6 +54,7 @@ def build_evidence_package(context: PipelineContext) -> dict:
 def collect_evidence_images(context: PipelineContext) -> list[dict]:
     records: list[dict] = []
     seen_paths: set[str] = set()
+    selected_frame_quality = _selected_frame_quality_by_id(context)
 
     for frame in context.selected_frames:
         if frame.path:
@@ -65,6 +66,7 @@ def collect_evidence_images(context: PipelineContext) -> list[dict]:
                 purpose=frame.purpose,
                 source="selected_frame",
                 frame_id=frame.id,
+                evidence_quality=selected_frame_quality.get(frame.id),
             )
 
     for item in [*context.overlays, *context.crops, *context.contact_sheets]:
@@ -139,6 +141,7 @@ def _append_image_record(
     purpose: str,
     source: str,
     frame_id: str | None = None,
+    evidence_quality: dict | None = None,
 ) -> None:
     if path in seen_paths:
         return
@@ -151,4 +154,46 @@ def _append_image_record(
     }
     if frame_id:
         record["frame_id"] = frame_id
+    if evidence_quality:
+        record["evidence_quality"] = deepcopy(evidence_quality)
+        record["quality_confidence"] = evidence_quality.get("analysis_reliability")
     records.append(record)
+
+
+def _selected_frame_quality_by_id(context: PipelineContext) -> dict[str, dict]:
+    if not context.input_quality:
+        return {}
+    quality_by_id: dict[str, dict] = {}
+    for item in context.input_quality.timeline:
+        if not isinstance(item, dict) or not item.get("frame_id"):
+            continue
+        quality_by_id[str(item["frame_id"])] = _quality_from_timeline_item(item)
+    return quality_by_id
+
+
+def _quality_from_timeline_item(item: dict) -> dict:
+    flags = set(item.get("quality_flags") or [])
+    weak_count = sum(
+        flag in flags
+        for flag in (
+            "blur",
+            "low_light",
+            "overexposure",
+            "night_noise",
+            "glare",
+            "low_contrast_fog_or_dirty_lens_candidate",
+        )
+    )
+    reliability = "low" if weak_count >= 2 else "medium" if weak_count else "high"
+    brightness = "dark" if "low_light" in flags else "overexposed" if "overexposure" in flags else "normal"
+    return {
+        "blur": "high" if "blur" in flags else "low",
+        "brightness": brightness,
+        "night_noise": "high" if "night_noise" in flags else "low",
+        "analysis_reliability": reliability,
+        "blur_score": round(float(item.get("blur_score", 0.0) or 0.0), 3),
+        "brightness_score": round(float(item.get("brightness_score", 0.0) or 0.0), 3),
+        "noise_score": round(float(item.get("noise_score", 0.0) or 0.0), 3),
+        "glare_ratio": round(float(item.get("glare_ratio", 0.0) or 0.0), 5),
+        "contrast_score": round(float(item.get("contrast_score", 0.0) or 0.0), 3),
+    }

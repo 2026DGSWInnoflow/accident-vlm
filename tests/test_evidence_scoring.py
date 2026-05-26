@@ -105,3 +105,27 @@ def test_summarize_evidence_images_reuses_existing_scores(monkeypatch):
     )
 
     assert [item["id"] for item in summary["top_evidence"]] == ["high", "low"]
+
+
+def test_score_evidence_image_skips_quality_for_generated_contact_sheet(monkeypatch, tmp_path):
+    image_path = tmp_path / "contact_sheet.jpg"
+    image_path.write_bytes(b"generated")
+
+    monkeypatch.setattr(
+        "accident_vlm.modules.evidence_scoring.read_cv_image",
+        lambda path: (_ for _ in ()).throw(
+            AssertionError("generated contact sheets should not be quality-scored")
+        ),
+    )
+
+    scored = score_evidence_image(
+        {
+            "id": "contact_sheet",
+            "path": str(image_path),
+            "purpose": "frame_selection_contact_sheet",
+            "source": "frame_selection_contact_sheet",
+        }
+    )
+
+    assert "evidence_quality" not in scored
+    assert scored["importance_score"] > 0

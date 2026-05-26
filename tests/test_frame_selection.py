@@ -304,6 +304,63 @@ def test_select_motion_keyframes_scans_forward_without_random_seeks(monkeypatch,
     assert selected
 
 
+def test_select_motion_keyframes_uses_compact_diff_frames(monkeypatch, tmp_path) -> None:
+    frames = []
+    for index in range(4):
+        image = np.zeros((240, 320, 3), dtype=np.uint8)
+        if index >= 2:
+            image[:, :] = 255
+        frames.append(image)
+    resize_shapes = []
+    original_resize = cv2.resize
+
+    class FakeCapture:
+        def __init__(self, path):
+            self.index = 0
+
+        def isOpened(self):
+            return True
+
+        def grab(self):
+            self.index += 1
+            return self.index <= len(frames)
+
+        def read(self):
+            if self.index >= len(frames):
+                return False, None
+            image = frames[self.index]
+            self.index += 1
+            return True, image
+
+        def release(self):
+            pass
+
+    def record_resize(image, size, *args, **kwargs):
+        resize_shapes.append(size)
+        return original_resize(image, size, *args, **kwargs)
+
+    monkeypatch.setattr(cv2, "VideoCapture", FakeCapture)
+    monkeypatch.setattr(cv2, "resize", record_resize)
+
+    selected = select_motion_keyframes(
+        tmp_path / "fake.mp4",
+        metadata=VideoMetadata(
+            duration_sec=0.4,
+            fps=10,
+            resolution="320x240",
+            frame_count=len(frames),
+            has_audio=False,
+        ),
+        sample_interval_sec=0.1,
+        max_frames=2,
+        min_change_score=20.0,
+    )
+
+    assert selected
+    assert resize_shapes
+    assert all(width <= 96 and height <= 54 for width, height in resize_shapes)
+
+
 def test_extract_selected_frames_scans_forward_without_random_seeks(monkeypatch, tmp_path) -> None:
     from accident_vlm.modules.frame_selection import extract_selected_frames
 

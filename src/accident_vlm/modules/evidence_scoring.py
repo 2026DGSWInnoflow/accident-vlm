@@ -47,6 +47,15 @@ SOURCE_BONUS = {
     "ocr_roi": -8,
 }
 
+GENERATED_QUALITY_SKIP_PURPOSES = {
+    "frame_selection_contact_sheet",
+    "lane_segmentation_overlay",
+    "bev_overlay",
+    "tracking_overlay",
+    "track_overlay",
+    "failure_case",
+}
+
 
 def score_evidence_image(record: dict[str, Any]) -> dict[str, Any]:
     scored = deepcopy(record)
@@ -63,7 +72,9 @@ def score_evidence_image(record: dict[str, Any]) -> dict[str, Any]:
     if scored.get("bbox"):
         score += 3
         reasons.append("localized")
-    quality = assess_evidence_image_quality(scored.get("path"))
+    quality = scored.get("evidence_quality") or (
+        {} if _skip_quality_assessment(purpose) else assess_evidence_image_quality(scored.get("path"))
+    )
     if quality:
         scored["evidence_quality"] = quality
         scored["quality_confidence"] = quality["analysis_reliability"]
@@ -76,6 +87,10 @@ def score_evidence_image(record: dict[str, Any]) -> dict[str, Any]:
     scored["importance_score"] = max(0, min(100, int(score)))
     scored["rank_reason"] = reasons
     return scored
+
+
+def _skip_quality_assessment(purpose: str) -> bool:
+    return purpose in GENERATED_QUALITY_SKIP_PURPOSES
 
 
 def assess_evidence_image_quality(path: Any) -> dict[str, Any]:
