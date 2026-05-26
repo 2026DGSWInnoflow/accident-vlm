@@ -10,7 +10,14 @@ from accident_vlm.server.schemas import AnalysisMode, AnalysisOptions, AnalysisS
 
 
 def analyze_video_pre_vlm(*args, **kwargs):
-    from accident_vlm.cli import analyze_video_pre_vlm as implementation
+    config = kwargs.get("config") if "config" in kwargs else args[1] if len(args) > 1 else None
+    if config is not None:
+        from accident_vlm.fast_prevlm import analyze_video_pre_vlm_fast, is_lightweight_fast_config
+
+        if is_lightweight_fast_config(config):
+            video_path = kwargs.get("video_path") if "video_path" in kwargs else args[0]
+            return analyze_video_pre_vlm_fast(video_path=video_path, config=config)
+    from accident_vlm.pipeline import analyze_video_pre_vlm as implementation
 
     return implementation(*args, **kwargs)
 

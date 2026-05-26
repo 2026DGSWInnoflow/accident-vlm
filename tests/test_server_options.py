@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 from accident_vlm.server.runner import config_from_options
@@ -107,3 +108,55 @@ for name in (
     )
 
     assert "True" not in result.stdout
+
+
+def test_runner_fast_analysis_defers_cli_typer_pipeline_and_vlm_modules(tmp_path: Path) -> None:
+    import subprocess
+    import sys
+
+    video_path = tmp_path / "sample.mp4"
+    output_root = tmp_path / "jobs"
+    script = f"""
+import cv2
+import json
+import numpy as np
+import sys
+from pathlib import Path
+
+from accident_vlm.server.job_store import JobStore
+from accident_vlm.server.runner import run_analysis_job
+from accident_vlm.server.schemas import AnalysisOptions
+
+video_path = Path({str(video_path)!r})
+writer = cv2.VideoWriter(str(video_path), cv2.VideoWriter_fourcc(*"mp4v"), 5, (32, 24))
+for _ in range(3):
+    writer.write(np.zeros((24, 32, 3), dtype=np.uint8))
+writer.release()
+
+store = JobStore(Path({str(output_root)!r}))
+record = store.create(AnalysisOptions().mode, video_path)
+run_analysis_job(store, record.job_id, video_path, AnalysisOptions(speed_mode="fast"))
+record = store.get(record.job_id)
+result = json.loads(Path(record.pre_vlm_output_path).read_text(encoding="utf-8"))
+print(json.dumps({{
+    "typer_loaded": "typer" in sys.modules,
+    "cli_loaded": "accident_vlm.cli" in sys.modules,
+    "pipeline_loaded": "accident_vlm.pipeline" in sys.modules,
+    "vlm_loaded": "accident_vlm.modules.vlm_composer" in sys.modules,
+    "selected_frames": len(result["selected_frames"]),
+}}))
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert json.loads(result.stdout.strip().splitlines()[-1]) == {
+        "typer_loaded": False,
+        "cli_loaded": False,
+        "pipeline_loaded": False,
+        "vlm_loaded": False,
+        "selected_frames": 1,
+    }
