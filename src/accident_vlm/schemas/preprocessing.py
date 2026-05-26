@@ -1,7 +1,9 @@
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class VideoMetadata(BaseModel):
+    model_config = ConfigDict(defer_build=True)
+
     duration_sec: float = Field(ge=0, allow_inf_nan=False)
     fps: float = Field(gt=0, allow_inf_nan=False)
     resolution: str = Field(min_length=1)
@@ -18,6 +20,8 @@ class VideoMetadata(BaseModel):
 
 
 class InputQuality(BaseModel):
+    model_config = ConfigDict(defer_build=True)
+
     blur: str
     brightness: str
     night_noise: str
@@ -31,6 +35,8 @@ class InputQuality(BaseModel):
 
 
 class SelectedFrame(BaseModel):
+    model_config = ConfigDict(defer_build=True)
+
     id: str = Field(min_length=1)
     time: str = Field(min_length=1, pattern=r"^\d{2,}:[0-5]\d\.\d{3}$")
     frame_index: int = Field(ge=0)
@@ -47,6 +53,8 @@ class SelectedFrame(BaseModel):
 
 
 class PipelineContext(BaseModel):
+    model_config = ConfigDict(defer_build=True)
+
     video_path: str
     video_metadata: VideoMetadata | None = None
     input_quality: InputQuality | None = None

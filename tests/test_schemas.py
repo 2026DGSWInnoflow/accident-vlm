@@ -3,7 +3,7 @@ from pydantic import ValidationError
 
 from accident_vlm.schemas.common import Confidence, EvidenceField, Status
 from accident_vlm.schemas.final_output import AccidentFactOutput, AccidentType, SceneType
-from accident_vlm.schemas.preprocessing import SelectedFrame, VideoMetadata
+from accident_vlm.schemas.preprocessing import InputQuality, PipelineContext, SelectedFrame, VideoMetadata
 
 
 def test_evidence_field_accepts_unknown_without_evidence():
@@ -167,3 +167,8 @@ print("accident_vlm.schemas.common" in sys.modules)
     )
 
     assert result.stdout.strip().splitlines() == ["False", "False"]
+
+
+@pytest.mark.parametrize("schema_class", [VideoMetadata, InputQuality, SelectedFrame, PipelineContext])
+def test_preprocessing_schemas_defer_pydantic_build(schema_class) -> None:
+    assert schema_class.model_config.get("defer_build") is True
