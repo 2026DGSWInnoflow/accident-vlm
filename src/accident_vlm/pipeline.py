@@ -120,16 +120,7 @@ def analyze_video_pre_vlm(
         active_config,
         build_initial_evidence_package=False,
     )
-    if active_config.enable_motion_keyframes:
-        motion_frames = select_motion_keyframes(
-            video_path=video_path,
-            metadata=metadata,
-            sample_interval_sec=active_config.motion_sample_interval_sec,
-            max_frames=active_config.max_motion_keyframes,
-            min_change_score=active_config.min_motion_change_score,
-        )
-        context.selected_frames = merge_selected_frames(context.selected_frames, motion_frames)
-
+    precision_frames: list = []
     if active_config.enable_event_scan:
         context.event_scan_candidates = scan_video_event_candidates(
             video_path=video_path,
@@ -151,6 +142,16 @@ def analyze_video_pre_vlm(
         )
         context.selected_frames = merge_selected_frames(context.selected_frames, precision_frames)
         context.rejected_frame_candidates = rejected_frames
+
+    if active_config.enable_motion_keyframes and not active_config.enable_event_scan:
+        motion_frames = select_motion_keyframes(
+            video_path=video_path,
+            metadata=metadata,
+            sample_interval_sec=active_config.motion_sample_interval_sec,
+            max_frames=active_config.max_motion_keyframes,
+            min_change_score=active_config.min_motion_change_score,
+        )
+        context.selected_frames = merge_selected_frames(context.selected_frames, motion_frames)
 
     run_output_dir = active_config.output_dir / Path(video_path).stem
     frame_output_dir = run_output_dir / active_config.frame_output_dirname

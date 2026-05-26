@@ -492,6 +492,133 @@ def test_analyze_video_pre_vlm_connects_event_scan_candidates(tmp_path, monkeypa
     assert context.evidence_package["precomputed_facts"]["rejected_frame_candidates"]
 
 
+def test_analyze_video_pre_vlm_skips_motion_scan_when_event_scan_finds_candidates(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "accident_vlm.pipeline.probe_video",
+        lambda video_path: VideoMetadata(
+            duration_sec=2.0,
+            fps=30,
+            resolution="640x480",
+            frame_count=60,
+            has_audio=False,
+        ),
+    )
+    monkeypatch.setattr(
+        "accident_vlm.pipeline.scan_video_event_candidates",
+        lambda *args, **kwargs: [
+            {
+                "time": "00:01.000",
+                "frame_index": 30,
+                "event_type": "event_scan_peak",
+                "event_score": 80,
+                "source": "high_fps_event_scan",
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        "accident_vlm.pipeline.select_precision_event_frames",
+        lambda *args, **kwargs: (
+            [
+                SelectedFrame(
+                    id="frame_000030",
+                    time="00:01.000",
+                    frame_index=30,
+                    purpose="event_scan_impact_candidate",
+                )
+            ],
+            [],
+        ),
+    )
+    monkeypatch.setattr(
+        "accident_vlm.pipeline.select_motion_keyframes",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("event scan precision frames should avoid duplicate motion scan")
+        ),
+    )
+    monkeypatch.setattr(
+        "accident_vlm.pipeline.extract_selected_frames",
+        lambda video_path, selected_frames, output_dir: [
+            frame.model_copy(update={"path": str(tmp_path / f"{frame.id}.jpg")})
+            for frame in selected_frames
+        ],
+    )
+    monkeypatch.setattr("accident_vlm.pipeline.analyze_input_quality", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        "accident_vlm.pipeline.build_frame_selection_contact_sheet",
+        lambda frames, output_path, title: {"status": "skipped"},
+    )
+
+    context = analyze_video_pre_vlm(
+        tmp_path / "sample.mp4",
+        PipelineConfig(
+            output_dir=tmp_path / "outputs",
+            enable_event_scan=True,
+            enable_motion_keyframes=True,
+            enable_ocr=False,
+            enable_actor_tracking=False,
+            enable_road_geometry=False,
+            enable_speed_distance=False,
+            enable_traffic_control=False,
+            enable_scene_analysis=False,
+            enable_event_detection=False,
+        ),
+    )
+
+    assert any("event_scan" in frame.purpose for frame in context.selected_frames)
+
+
+def test_analyze_video_pre_vlm_skips_motion_scan_when_event_scan_is_enabled_without_candidates(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "accident_vlm.pipeline.probe_video",
+        lambda video_path: VideoMetadata(
+            duration_sec=1.0,
+            fps=10,
+            resolution="640x480",
+            frame_count=10,
+            has_audio=False,
+        ),
+    )
+    monkeypatch.setattr("accident_vlm.pipeline.scan_video_event_candidates", lambda *args, **kwargs: [])
+    monkeypatch.setattr("accident_vlm.pipeline.select_precision_event_frames", lambda *args, **kwargs: ([], []))
+    monkeypatch.setattr(
+        "accident_vlm.pipeline.select_motion_keyframes",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("event scan should replace duplicate motion scan")
+        ),
+    )
+    monkeypatch.setattr(
+        "accident_vlm.pipeline.extract_selected_frames",
+        lambda video_path, selected_frames, output_dir: [
+            frame.model_copy(update={"path": str(tmp_path / f"{frame.id}.jpg")})
+            for frame in selected_frames
+        ],
+    )
+    monkeypatch.setattr("accident_vlm.pipeline.analyze_input_quality", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        "accident_vlm.pipeline.build_frame_selection_contact_sheet",
+        lambda frames, output_path, title: {"status": "skipped"},
+    )
+
+    context = analyze_video_pre_vlm(
+        tmp_path / "sample.mp4",
+        PipelineConfig(
+            output_dir=tmp_path / "outputs",
+            enable_event_scan=True,
+            enable_motion_keyframes=True,
+            enable_ocr=False,
+            enable_actor_tracking=False,
+            enable_road_geometry=False,
+            enable_speed_distance=False,
+            enable_traffic_control=False,
+            enable_scene_analysis=False,
+            enable_event_detection=False,
+        ),
+    )
+
+    assert context.event_scan_candidates == []
+    assert context.selected_frames
+
+
 def test_analyze_video_pre_vlm_limits_event_candidates_before_segments(tmp_path, monkeypatch) -> None:
     captured = {}
 
