@@ -2,11 +2,6 @@ from pathlib import Path
 
 from accident_vlm.config import PipelineConfig
 from accident_vlm.modules.event_detection import detect_event_candidates
-from accident_vlm.modules.event_scan import (
-    build_frame_selection_contact_sheet,
-    scan_video_event_candidates,
-    select_precision_event_frames,
-)
 from accident_vlm.modules.frame_selection import (
     build_event_segments,
     extract_selected_frames,
@@ -40,6 +35,12 @@ def build_event_evidence_overlays(*args, **kwargs):
     return implementation(*args, **kwargs)
 
 
+def build_frame_selection_contact_sheet(*args, **kwargs):
+    from accident_vlm.modules.event_scan import build_frame_selection_contact_sheet as implementation
+
+    return implementation(*args, **kwargs)
+
+
 def build_visual_evidence(*args, **kwargs):
     from accident_vlm.modules.evidence_visuals import build_visual_evidence as implementation
 
@@ -66,6 +67,18 @@ def detect_and_track_actors(*args, **kwargs):
 
 def detect_and_track_segments(*args, **kwargs):
     from accident_vlm.modules.actor_tracking import detect_and_track_segments as implementation
+
+    return implementation(*args, **kwargs)
+
+
+def scan_video_event_candidates(*args, **kwargs):
+    from accident_vlm.modules.event_scan import scan_video_event_candidates as implementation
+
+    return implementation(*args, **kwargs)
+
+
+def select_precision_event_frames(*args, **kwargs):
+    from accident_vlm.modules.event_scan import select_precision_event_frames as implementation
 
     return implementation(*args, **kwargs)
 

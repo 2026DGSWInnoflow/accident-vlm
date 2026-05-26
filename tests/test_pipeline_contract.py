@@ -37,6 +37,7 @@ for name in (
     "accident_vlm.modules.actor_tracking",
     "accident_vlm.modules.evidence_builder",
     "accident_vlm.modules.evidence_visuals",
+    "accident_vlm.modules.event_scan",
     "accident_vlm.modules.road_geometry",
     "accident_vlm.modules.traffic_control",
 ):

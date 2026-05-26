@@ -273,6 +273,38 @@ def test_scan_video_event_candidates_uses_compact_flow_frames(monkeypatch, tmp_p
     assert all(height <= 54 and width <= 96 for height, width in flow_shapes)
 
 
+def test_scan_video_event_candidates_converts_compact_frames_to_gray(monkeypatch, tmp_path):
+    video_path = tmp_path / "flash.mp4"
+    _write_flash_video(video_path, fps=30, frame_count=60)
+    metadata = VideoMetadata(
+        duration_sec=2.0,
+        fps=30,
+        resolution="96x64",
+        frame_count=60,
+        has_audio=False,
+    )
+    cvt_shapes = []
+    original_cvt_color = cv2.cvtColor
+
+    def record_cvt_color(image, code):
+        cvt_shapes.append(image.shape[:2])
+        return original_cvt_color(image, code)
+
+    monkeypatch.setattr(cv2, "cvtColor", record_cvt_color)
+
+    candidates = scan_video_event_candidates(
+        video_path,
+        metadata,
+        sample_fps=5.0,
+        top_k=3,
+        min_score=1.0,
+    )
+
+    assert candidates
+    assert cvt_shapes
+    assert all(height <= 54 and width <= 96 for height, width in cvt_shapes)
+
+
 def test_scan_video_event_candidates_skips_flow_for_static_frames(monkeypatch, tmp_path):
     video_path = tmp_path / "static.mp4"
     writer = cv2.VideoWriter(

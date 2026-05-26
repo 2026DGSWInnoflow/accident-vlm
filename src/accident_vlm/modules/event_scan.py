@@ -50,8 +50,8 @@ def scan_video_event_candidates(
             metadata.frame_count,
             sample_step,
         ):
-            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-            small_gray = cv2.resize(gray, _EVENT_SCAN_FLOW_SIZE, interpolation=cv2.INTER_AREA)
+            small_image = cv2.resize(image, _EVENT_SCAN_FLOW_SIZE, interpolation=cv2.INTER_AREA)
+            small_gray = cv2.cvtColor(small_image, cv2.COLOR_BGR2GRAY)
             hist = cv2.calcHist([small_gray], [0], None, [32], [0, 256])
             cv2.normalize(hist, hist)
             if previous_gray is None or previous_hist is None or previous_frame_index is None:

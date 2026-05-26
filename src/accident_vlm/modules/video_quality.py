@@ -12,6 +12,7 @@ from accident_vlm.schemas.preprocessing import InputQuality, SelectedFrame
 from accident_vlm.utils.timecode import parse_timecode
 
 _MOTION_FLOW_SKIP_DIFF_THRESHOLD = 0.5
+_QUALITY_METRIC_MAX_SIDE = 320
 
 
 def _bucket(value: float, low: float, high: float, labels: tuple[str, str, str]) -> str:
@@ -62,7 +63,8 @@ def analyze_input_quality(
 
     try:
         for frame, image in frame_images:
-            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+            metric_image = _resize_max_side(image, _QUALITY_METRIC_MAX_SIDE)
+            gray = cv2.cvtColor(metric_image, cv2.COLOR_BGR2GRAY)
             blur_score = float(cv2.Laplacian(gray, cv2.CV_64F).var())
             brightness_score = float(gray.mean())
             noise_score = float(gray.std())
@@ -200,6 +202,19 @@ def _read_extracted_frame_images(frames: list[SelectedFrame]) -> list[tuple[Sele
             return None
         frame_images.append((frame, image))
     return frame_images
+
+
+def _resize_max_side(image: np.ndarray, max_side: int) -> np.ndarray:
+    height, width = image.shape[:2]
+    longest_side = max(height, width)
+    if longest_side <= max_side:
+        return image
+    scale = max_side / longest_side
+    return cv2.resize(
+        image,
+        (max(1, int(round(width * scale))), max(1, int(round(height * scale)))),
+        interpolation=cv2.INTER_AREA,
+    )
 
 
 def _can_skip_motion_flow(previous_gray: np.ndarray, gray: np.ndarray) -> bool:

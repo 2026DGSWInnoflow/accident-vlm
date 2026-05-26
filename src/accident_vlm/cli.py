@@ -1,5 +1,75 @@
+from __future__ import annotations
+
 import json
+import sys
 from pathlib import Path
+
+
+def analyze_video_pre_vlm(video_path: Path, config):
+    from accident_vlm.pipeline import analyze_video_pre_vlm as implementation
+
+    return implementation(video_path=video_path, config=config)
+
+
+def _try_fast_analyze(argv: list[str]) -> bool:
+    if len(argv) < 2 or argv[1] != "analyze":
+        return False
+
+    from accident_vlm.config import PipelineConfig, QUALITY_OBJECT_DETECTOR_BACKEND
+
+    options = {
+        "ocr_backend": "auto",
+        "object_detector_backend": QUALITY_OBJECT_DETECTOR_BACKEND,
+        "object_detector_model": "yolov8x.pt",
+        "output_dir": Path("outputs"),
+    }
+    option_names = {
+        "--ocr-backend": ("ocr_backend", str),
+        "--detector": ("object_detector_backend", str),
+        "--detector-model": ("object_detector_model", str),
+        "--output-dir": ("output_dir", Path),
+    }
+    positional: list[str] = []
+    index = 2
+    while index < len(argv):
+        item = argv[index]
+        if item.startswith("-"):
+            option = option_names.get(item)
+            if option is None or index + 1 >= len(argv):
+                return False
+            key, converter = option
+            options[key] = converter(argv[index + 1])
+            index += 2
+            continue
+        positional.append(item)
+        index += 1
+
+    if not positional or len(positional) > 2:
+        return False
+
+    video_path = Path(positional[0])
+    output_path = Path(positional[1]) if len(positional) == 2 else Path("outputs/pre_vlm_context.json")
+    config = PipelineConfig(
+        output_dir=options["output_dir"],
+        ocr_backend=options["ocr_backend"],
+        object_detector_backend=options["object_detector_backend"],
+        object_detector_model=options["object_detector_model"],
+    )
+    context = analyze_video_pre_vlm(video_path=video_path, config=config)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(
+        json.dumps(context.model_dump(), ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    print(f"Pre-VLM context written to {output_path}")
+    print(str(output_path))
+    return True
+
+
+if __name__ == "__main__" and _try_fast_analyze(sys.argv):
+    raise SystemExit(0)
+
+
 from typing import Annotated
 
 import typer
@@ -11,12 +81,6 @@ app = typer.Typer(
     help="Accident video fact extraction tools.",
     no_args_is_help=True,
 )
-
-
-def analyze_video_pre_vlm(video_path: Path, config: PipelineConfig):
-    from accident_vlm.pipeline import analyze_video_pre_vlm as implementation
-
-    return implementation(video_path=video_path, config=config)
 
 
 @app.callback(invoke_without_command=True)

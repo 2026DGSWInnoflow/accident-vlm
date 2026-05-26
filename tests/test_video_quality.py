@@ -217,6 +217,41 @@ def test_analyze_input_quality_downscales_optical_flow_inputs(monkeypatch, tmp_p
     assert all(height <= 64 and width <= 64 for height, width in flow_shapes)
 
 
+def test_analyze_input_quality_converts_downscaled_frames_to_gray(monkeypatch, tmp_path) -> None:
+    frame_paths = []
+    for index in range(2):
+        image = np.full((720, 1280, 3), 96 + index * 24, dtype=np.uint8)
+        path = tmp_path / f"frame_{index:06d}.jpg"
+        cv2.imwrite(str(path), image)
+        frame_paths.append(path)
+    cvt_shapes = []
+    original_cvt_color = cv2.cvtColor
+
+    def record_cvt_color(image, code):
+        cvt_shapes.append(image.shape[:2])
+        return original_cvt_color(image, code)
+
+    monkeypatch.setattr(cv2, "cvtColor", record_cvt_color)
+
+    quality = analyze_input_quality(
+        tmp_path / "fake.mp4",
+        [
+            SelectedFrame(
+                id=f"frame_{index:06d}",
+                time=f"00:00.{index}00",
+                frame_index=index,
+                purpose="regular_context",
+                path=str(path),
+            )
+            for index, path in enumerate(frame_paths)
+        ],
+    )
+
+    assert quality.timeline
+    assert cvt_shapes
+    assert all(max(height, width) <= 320 for height, width in cvt_shapes)
+
+
 def test_analyze_input_quality_avoids_numpy_percentile_for_contrast(monkeypatch, tmp_path) -> None:
     frames = []
     for index in range(2):
