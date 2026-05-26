@@ -202,11 +202,12 @@ def analyze_video_pre_vlm(
         output_dir=frame_output_dir,
     )
 
-    context.input_quality = analyze_input_quality(
-        video_path,
-        context.selected_frames,
-        event_windows=context.event_scan_candidates,
-    )
+    if active_config.enable_input_quality:
+        context.input_quality = analyze_input_quality(
+            video_path,
+            context.selected_frames,
+            event_windows=context.event_scan_candidates,
+        )
 
     if active_config.enable_ocr and _ocr_backend_enabled(active_config.ocr_backend):
         ocr_backend = create_ocr_backend(active_config.ocr_backend)
@@ -334,13 +335,14 @@ def analyze_video_pre_vlm(
             output_dir=frame_output_dir,
         )
 
-    contact_sheet = build_frame_selection_contact_sheet(
-        context.selected_frames,
-        run_output_dir / "reports" / "frame_selection_contact_sheet.jpg",
-        title=f"{Path(video_path).name} frame selection",
-    )
-    if contact_sheet.get("status") in {"created", "reused"}:
-        context.contact_sheets = [contact_sheet]
+    if active_config.enable_contact_sheet:
+        contact_sheet = build_frame_selection_contact_sheet(
+            context.selected_frames,
+            run_output_dir / "reports" / "frame_selection_contact_sheet.jpg",
+            title=f"{Path(video_path).name} frame selection",
+        )
+        if contact_sheet.get("status") in {"created", "reused"}:
+            context.contact_sheets = [contact_sheet]
 
     if not context.preprocessing_uncertainties:
         context.preprocessing_uncertainties = _collect_preprocessing_uncertainties(context)

@@ -42,6 +42,8 @@ class PipelineConfig:
     enable_traffic_control: bool = True
     enable_event_detection: bool = True
     enable_event_scan: bool = True
+    enable_input_quality: bool = True
+    enable_contact_sheet: bool = True
     enable_vlm: bool = False
     frame_output_dirname: str = "frames"
     overlay_output_dirname: str = "overlays"

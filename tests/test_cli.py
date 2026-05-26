@@ -164,6 +164,8 @@ def test_cli_fast_analyze_speed_mode_fast_disables_expensive_preprocessing(
     assert config.enable_scene_analysis is False
     assert config.enable_event_detection is False
     assert config.enable_speed_distance is False
+    assert config.enable_input_quality is False
+    assert config.enable_contact_sheet is False
     assert config.max_selected_frames == 8
     assert config.vlm_frame_budget == 8
 

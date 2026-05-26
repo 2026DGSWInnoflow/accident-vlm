@@ -37,6 +37,8 @@ def _build_analyze_config(
             enable_traffic_control=False,
             enable_event_detection=False,
             enable_event_scan=False,
+            enable_input_quality=False,
+            enable_contact_sheet=False,
             ocr_backend="none",
             object_detector_backend="none",
             object_detector_model=object_detector_model,
