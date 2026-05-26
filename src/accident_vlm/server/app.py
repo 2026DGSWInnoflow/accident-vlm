@@ -22,7 +22,6 @@ from accident_vlm.config import (
     QUALITY_VLM_FRAME_BUDGET,
 )
 from accident_vlm.server.job_store import JobStore
-from accident_vlm.server.runner import run_analysis_job
 from accident_vlm.server.schemas import (
     AnalysisMode,
     AnalysisOptions,
@@ -33,6 +32,12 @@ from accident_vlm.server.schemas import (
     PathAnalysisRequest,
     ResultResponse,
 )
+
+
+def run_analysis_job(*args, **kwargs):
+    from accident_vlm.server.runner import run_analysis_job as implementation
+
+    return implementation(*args, **kwargs)
 
 
 def create_app(job_root: Path = Path("outputs/api_jobs")) -> FastAPI:

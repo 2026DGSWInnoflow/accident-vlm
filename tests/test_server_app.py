@@ -5,6 +5,30 @@ from accident_vlm.server.app import create_app
 from accident_vlm.server.schemas import AnalysisSpeedMode
 
 
+def test_server_app_import_defers_analysis_runner_modules() -> None:
+    import subprocess
+    import sys
+
+    script = """
+import sys
+import accident_vlm.server.app
+for name in (
+    "accident_vlm.server.runner",
+    "accident_vlm.pipeline",
+    "accident_vlm.modules.vlm_composer",
+):
+    print(name, name in sys.modules)
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "True" not in result.stdout
+
+
 def test_upload_job_accepts_fast_speed_mode_form(monkeypatch, tmp_path) -> None:
     captured = {}
 
