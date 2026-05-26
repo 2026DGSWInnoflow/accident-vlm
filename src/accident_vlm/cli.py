@@ -3,7 +3,6 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
-from rich import print
 
 from accident_vlm import __version__
 from accident_vlm.config import DEFAULT_QWEN_MODEL_ID, PipelineConfig, QUALITY_OBJECT_DETECTOR_BACKEND
@@ -73,7 +72,7 @@ def analyze(
         json.dumps(context.model_dump(), ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
-    print(f"Pre-VLM context written to {output_path}")
+    typer.echo(f"Pre-VLM context written to {output_path}")
     typer.echo(str(output_path))
 
 
@@ -114,8 +113,8 @@ def analyze_full(
     backend = create_qwen_backend(config)
     final_facts = compose_final_facts(context, backend)
     write_final_facts(final_facts, final_output_path)
-    print(f"Pre-VLM context written to {pre_vlm_output_path}")
-    print(f"Final accident facts written to {final_output_path}")
+    typer.echo(f"Pre-VLM context written to {pre_vlm_output_path}")
+    typer.echo(f"Final accident facts written to {final_output_path}")
 
 
 @app.command()
@@ -145,7 +144,7 @@ def evaluate_dataset(
     report = {"summary": summarize_evaluation(items), "items": items}
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"Dataset evaluation written to {output_path}")
+    typer.echo(f"Dataset evaluation written to {output_path}")
 
 
 @app.command()
@@ -199,8 +198,8 @@ def benchmark_api(
             verbose=verbose,
         )
     )
-    print(f"API benchmark written to {output_path}")
-    print(json.dumps(report["summary"], ensure_ascii=False, indent=2))
+    typer.echo(f"API benchmark written to {output_path}")
+    typer.echo(json.dumps(report["summary"], ensure_ascii=False, indent=2))
 
 
 if __name__ == "__main__":

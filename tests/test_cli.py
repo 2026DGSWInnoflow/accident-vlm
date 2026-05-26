@@ -25,6 +25,7 @@ for name in (
     "accident_vlm.evaluation",
     "accident_vlm.modules.vlm_composer",
     "accident_vlm.pipeline",
+    "rich",
 ):
     print(name, name in sys.modules)
 """
