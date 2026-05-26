@@ -64,6 +64,23 @@ def test_assess_evidence_image_quality_avoids_numpy_percentile(monkeypatch, tmp_
     assert quality["contrast_score"] > 0
 
 
+def test_assess_evidence_image_quality_downscales_metric_inputs(monkeypatch, tmp_path):
+    image_path = tmp_path / "large.jpg"
+    cv2.imwrite(str(image_path), np.full((240, 320, 3), 180, dtype=np.uint8))
+    laplacian_shapes = []
+
+    def fake_laplacian(gray, dtype):
+        laplacian_shapes.append(gray.shape)
+        return np.zeros_like(gray, dtype=np.float64)
+
+    monkeypatch.setattr(cv2, "Laplacian", fake_laplacian)
+
+    assess_evidence_image_quality(image_path)
+
+    assert laplacian_shapes
+    assert all(height <= 128 and width <= 128 for height, width in laplacian_shapes)
+
+
 def test_summarize_evidence_images_reuses_existing_scores(monkeypatch):
     def fail_score(record):
         raise AssertionError("pre-ranked records should not be scored again")

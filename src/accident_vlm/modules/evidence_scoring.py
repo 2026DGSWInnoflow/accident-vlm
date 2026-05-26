@@ -88,11 +88,12 @@ def assess_evidence_image_quality(path: Any) -> dict[str, Any]:
     if image is None:
         return {}
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    blur_score = float(cv2.Laplacian(gray, cv2.CV_64F).var())
-    brightness_score = float(gray.mean())
-    noise_score = float(gray.std())
-    glare_ratio = float((gray >= 245).mean())
-    contrast_score = gray_percentile_range(gray)
+    metric_gray = _metric_gray(gray)
+    blur_score = float(cv2.Laplacian(metric_gray, cv2.CV_64F).var())
+    brightness_score = float(metric_gray.mean())
+    noise_score = float(metric_gray.std())
+    glare_ratio = float((metric_gray >= 245).mean())
+    contrast_score = gray_percentile_range(metric_gray)
     blur = "high" if blur_score < 80 else "medium" if blur_score < 300 else "low"
     brightness = "dark" if brightness_score < 65 else "overexposed" if brightness_score > 205 else "normal"
     noise = "high" if noise_score > 75 else "medium" if noise_score > 35 else "low"
@@ -115,6 +116,19 @@ def assess_evidence_image_quality(path: Any) -> dict[str, Any]:
         "glare_ratio": round(glare_ratio, 5),
         "contrast_score": round(contrast_score, 3),
     }
+
+
+def _metric_gray(gray, max_side: int = 128):
+    height, width = gray.shape[:2]
+    longest_side = max(height, width)
+    if longest_side <= max_side:
+        return gray
+    scale = max_side / longest_side
+    return cv2.resize(
+        gray,
+        (max(1, int(round(width * scale))), max(1, int(round(height * scale)))),
+        interpolation=cv2.INTER_AREA,
+    )
 
 
 def rank_evidence_images(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
