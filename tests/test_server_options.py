@@ -84,3 +84,26 @@ def test_config_from_options_fast_mode_disables_expensive_preprocessing(tmp_path
     assert config.enable_contact_sheet is False
     assert config.max_selected_frames == 8
     assert config.vlm_frame_budget == 8
+
+
+def test_runner_import_defers_pipeline_and_vlm_modules() -> None:
+    import subprocess
+    import sys
+
+    script = """
+import sys
+import accident_vlm.server.runner
+for name in (
+    "accident_vlm.pipeline",
+    "accident_vlm.modules.vlm_composer",
+):
+    print(name, name in sys.modules)
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "True" not in result.stdout

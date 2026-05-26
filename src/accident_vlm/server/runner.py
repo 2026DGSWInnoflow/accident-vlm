@@ -5,10 +5,32 @@ import traceback
 from pathlib import Path
 
 from accident_vlm.config import PipelineConfig
-from accident_vlm.modules.vlm_composer import compose_final_facts, get_qwen_backend, write_final_facts
-from accident_vlm.pipeline import analyze_video_pre_vlm
 from accident_vlm.server.job_store import JobStore
 from accident_vlm.server.schemas import AnalysisMode, AnalysisOptions, AnalysisSpeedMode
+
+
+def analyze_video_pre_vlm(*args, **kwargs):
+    from accident_vlm.cli import analyze_video_pre_vlm as implementation
+
+    return implementation(*args, **kwargs)
+
+
+def compose_final_facts(*args, **kwargs):
+    from accident_vlm.modules.vlm_composer import compose_final_facts as implementation
+
+    return implementation(*args, **kwargs)
+
+
+def get_qwen_backend(*args, **kwargs):
+    from accident_vlm.modules.vlm_composer import get_qwen_backend as implementation
+
+    return implementation(*args, **kwargs)
+
+
+def write_final_facts(*args, **kwargs):
+    from accident_vlm.modules.vlm_composer import write_final_facts as implementation
+
+    return implementation(*args, **kwargs)
 
 
 def config_from_options(options: AnalysisOptions, output_dir: Path) -> PipelineConfig:
