@@ -122,7 +122,7 @@ def analyze_video_pre_vlm(
         event_windows=context.event_scan_candidates,
     )
 
-    if active_config.enable_ocr:
+    if active_config.enable_ocr and _ocr_backend_enabled(active_config.ocr_backend):
         ocr_backend = create_ocr_backend(active_config.ocr_backend)
         context.ocr_observations = extract_ocr_observations(
             context.selected_frames,
@@ -286,6 +286,10 @@ def _collect_preprocessing_uncertainties(context: PipelineContext) -> list[str]:
         if item not in deduped:
             deduped.append(item)
     return deduped
+
+
+def _ocr_backend_enabled(name: str) -> bool:
+    return name.strip().lower() not in {"none", "disabled", "off", "false", "0"}
 
 
 def _limit_event_candidates(event_candidates: list[dict], max_candidates: int) -> list[dict]:

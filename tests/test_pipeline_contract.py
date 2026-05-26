@@ -95,6 +95,57 @@ def test_analyze_video_pre_vlm_builds_final_evidence_package_once(tmp_path, monk
     assert all(path for path in calls[0])
 
 
+def test_analyze_video_pre_vlm_skips_ocr_work_when_backend_is_none(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "accident_vlm.pipeline.probe_video",
+        lambda video_path: VideoMetadata(
+            duration_sec=1.0,
+            fps=10,
+            resolution="640x480",
+            frame_count=10,
+            has_audio=False,
+        ),
+    )
+    monkeypatch.setattr(
+        "accident_vlm.pipeline.extract_selected_frames",
+        lambda video_path, selected_frames, output_dir: [
+            frame.model_copy(update={"path": str(tmp_path / f"{frame.id}.jpg")})
+            for frame in selected_frames
+        ],
+    )
+    monkeypatch.setattr("accident_vlm.pipeline.analyze_input_quality", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        "accident_vlm.pipeline.extract_ocr_observations",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("disabled OCR must not prepare ROIs")
+        ),
+    )
+    monkeypatch.setattr(
+        "accident_vlm.pipeline.build_frame_selection_contact_sheet",
+        lambda frames, output_path, title: {"status": "skipped"},
+    )
+
+    context = analyze_video_pre_vlm(
+        tmp_path / "sample.mp4",
+        PipelineConfig(
+            output_dir=tmp_path / "outputs",
+            ocr_backend="none",
+            enable_ocr=True,
+            enable_motion_keyframes=False,
+            enable_event_scan=False,
+            enable_actor_tracking=False,
+            enable_road_geometry=False,
+            enable_speed_distance=False,
+            enable_traffic_control=False,
+            enable_scene_analysis=False,
+            enable_event_detection=False,
+        ),
+    )
+
+    assert context.ocr_observations == []
+    assert context.ocr_summary == {}
+
+
 def test_build_evidence_package_is_snapshot_of_mutable_context_fields() -> None:
     context = PipelineContext(
         video_path="sample.mp4",
