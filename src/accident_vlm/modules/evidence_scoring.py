@@ -118,7 +118,7 @@ def assess_evidence_image_quality(path: Any) -> dict[str, Any]:
     }
 
 
-def _metric_gray(gray, max_side: int = 128):
+def _metric_gray(gray, max_side: int = 96):
     height, width = gray.shape[:2]
     longest_side = max(height, width)
     if longest_side <= max_side:

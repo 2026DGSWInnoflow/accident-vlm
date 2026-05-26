@@ -1,8 +1,6 @@
 from pathlib import Path
 
 from accident_vlm.config import PipelineConfig
-from accident_vlm.modules.evidence_builder import build_evidence_package
-from accident_vlm.modules.evidence_visuals import build_event_evidence_overlays, build_visual_evidence
 from accident_vlm.modules.event_detection import detect_event_candidates
 from accident_vlm.modules.event_scan import (
     build_frame_selection_contact_sheet,
@@ -28,6 +26,24 @@ from accident_vlm.modules.speed_distance import estimate_speed_and_distance
 from accident_vlm.modules.track_consolidation import consolidate_tracks
 from accident_vlm.modules.video_quality import analyze_input_quality
 from accident_vlm.schemas.preprocessing import PipelineContext, VideoMetadata
+
+
+def build_evidence_package(*args, **kwargs):
+    from accident_vlm.modules.evidence_builder import build_evidence_package as implementation
+
+    return implementation(*args, **kwargs)
+
+
+def build_event_evidence_overlays(*args, **kwargs):
+    from accident_vlm.modules.evidence_visuals import build_event_evidence_overlays as implementation
+
+    return implementation(*args, **kwargs)
+
+
+def build_visual_evidence(*args, **kwargs):
+    from accident_vlm.modules.evidence_visuals import build_visual_evidence as implementation
+
+    return implementation(*args, **kwargs)
 
 
 def compare_tracker_outputs(*args, **kwargs):

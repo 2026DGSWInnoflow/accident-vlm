@@ -78,7 +78,7 @@ def test_assess_evidence_image_quality_downscales_metric_inputs(monkeypatch, tmp
     assess_evidence_image_quality(image_path)
 
     assert laplacian_shapes
-    assert all(height <= 128 and width <= 128 for height, width in laplacian_shapes)
+    assert all(height <= 96 and width <= 96 for height, width in laplacian_shapes)
 
 
 def test_summarize_evidence_images_reuses_existing_scores(monkeypatch):
