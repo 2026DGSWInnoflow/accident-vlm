@@ -211,3 +211,63 @@ def test_scan_video_event_candidates_scans_forward_without_random_seeks(monkeypa
 
     assert captures[0].set_calls == []
     assert candidates
+
+
+def test_scan_video_event_candidates_avoids_numpy_percentile(monkeypatch, tmp_path):
+    video_path = tmp_path / "flash.mp4"
+    _write_flash_video(video_path)
+    metadata = VideoMetadata(
+        duration_sec=2.0,
+        fps=30,
+        resolution="96x64",
+        frame_count=60,
+        has_audio=False,
+    )
+    monkeypatch.setattr(
+        "accident_vlm.modules.event_scan.np.percentile",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("event scan should avoid full percentile sorting")
+        ),
+    )
+
+    candidates = scan_video_event_candidates(
+        video_path,
+        metadata,
+        sample_fps=5.0,
+        top_k=3,
+        min_score=1.0,
+    )
+
+    assert candidates
+
+
+def test_scan_video_event_candidates_uses_compact_flow_frames(monkeypatch, tmp_path):
+    video_path = tmp_path / "flash.mp4"
+    _write_flash_video(video_path)
+    metadata = VideoMetadata(
+        duration_sec=2.0,
+        fps=30,
+        resolution="96x64",
+        frame_count=60,
+        has_audio=False,
+    )
+    flow_shapes = []
+    original_flow = cv2.calcOpticalFlowFarneback
+
+    def record_flow(previous, current, *args, **kwargs):
+        flow_shapes.append(current.shape)
+        return original_flow(previous, current, *args, **kwargs)
+
+    monkeypatch.setattr(cv2, "calcOpticalFlowFarneback", record_flow)
+
+    candidates = scan_video_event_candidates(
+        video_path,
+        metadata,
+        sample_fps=5.0,
+        top_k=3,
+        min_score=1.0,
+    )
+
+    assert candidates
+    assert flow_shapes
+    assert all(height <= 54 and width <= 96 for height, width in flow_shapes)

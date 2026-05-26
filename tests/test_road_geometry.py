@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 
-from accident_vlm.modules.road_geometry import analyze_road_geometry
+from accident_vlm.modules.road_geometry import _detect_road_markings, analyze_road_geometry
 from accident_vlm.schemas.preprocessing import SelectedFrame
 
 
@@ -109,3 +109,22 @@ def test_analyze_road_geometry_uses_onnx_lane_segmentation_backend(monkeypatch, 
     assert result["lane_segmentation"]["model_path"] == str(model_path)
     assert result["lane_detection_vote"]["segmentation_lane_count"] >= 1
     assert result["lane_segmentation"]["segmentation_overlays"]
+
+
+def test_detect_road_markings_uses_downscaled_hough_input(monkeypatch) -> None:
+    image = np.zeros((480, 640, 3), dtype=np.uint8)
+    cv2.line(image, (80, 360), (560, 360), (255, 255, 255), 8)
+    shapes = []
+    original_hough = cv2.HoughLinesP
+
+    def record_hough(edges, *args, **kwargs):
+        shapes.append(edges.shape)
+        return original_hough(edges, *args, **kwargs)
+
+    monkeypatch.setattr(cv2, "HoughLinesP", record_hough)
+
+    candidates = _detect_road_markings(image, "frame_000001")
+
+    assert any(item["type"] == "stop_line" for item in candidates)
+    assert shapes
+    assert all(width <= 240 for _height, width in shapes)

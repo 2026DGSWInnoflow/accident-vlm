@@ -383,14 +383,16 @@ def _vote_lane_count(opencv_count: int | None, segmentation_count: int | None) -
 def _detect_road_markings(image: np.ndarray, frame_id: str) -> list[dict]:
     candidates: list[dict] = []
     height, width = image.shape[:2]
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    detection_image, detection_scale = _downscale_for_marking_detection(image)
+    detection_height, detection_width = detection_image.shape[:2]
+    gray = cv2.cvtColor(detection_image, cv2.COLOR_BGR2GRAY)
     edges = cv2.Canny(cv2.GaussianBlur(gray, (5, 5), 0), 60, 160)
     lines = cv2.HoughLinesP(
         edges,
         rho=1,
         theta=np.pi / 180,
         threshold=45,
-        minLineLength=max(30, width // 8),
+        minLineLength=max(30, detection_width // 8),
         maxLineGap=20,
     )
     horizontal_lines = []
@@ -402,17 +404,27 @@ def _detect_road_markings(image: np.ndarray, frame_id: str) -> list[dict]:
             length = float(((x2 - x1) ** 2 + (y2 - y1) ** 2) ** 0.5)
             if angle < 12 or angle > 168:
                 horizontal_lines.append((x1, y1, x2, y2, length))
-            if 75 <= angle <= 105 and abs(((x1 + x2) / 2) - width / 2) < width * 0.12:
+            if 75 <= angle <= 105 and abs(((x1 + x2) / 2) - detection_width / 2) < detection_width * 0.12:
                 vertical_center_lines.append((x1, y1, x2, y2, length))
     if horizontal_lines:
         longest = max(horizontal_lines, key=lambda item: item[4])
-        if longest[4] >= width * 0.45 and longest[1] > height * 0.55:
+        if longest[4] >= detection_width * 0.45 and longest[1] > detection_height * 0.55:
             candidates.append(
                 {
                     "type": "stop_line",
                     "frame_id": frame_id,
                     "confidence": "medium",
-                    "bbox": [min(longest[0], longest[2]), min(longest[1], longest[3]), max(longest[0], longest[2]), max(longest[1], longest[3])],
+                    "bbox": _scale_bbox_to_source(
+                        [
+                            min(longest[0], longest[2]),
+                            min(longest[1], longest[3]),
+                            max(longest[0], longest[2]),
+                            max(longest[1], longest[3]),
+                        ],
+                        detection_scale,
+                        width,
+                        height,
+                    ),
                     "source": "opencv_hough_horizontal_line",
                 }
             )
@@ -427,11 +439,11 @@ def _detect_road_markings(image: np.ndarray, frame_id: str) -> list[dict]:
                     "source": "opencv_hough_parallel_horizontal_lines",
                 }
             )
-    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    hsv = cv2.cvtColor(detection_image, cv2.COLOR_BGR2HSV)
     yellow_mask = cv2.inRange(hsv, (15, 60, 60), (40, 255, 255))
-    yellow_ratio = float(np.count_nonzero(yellow_mask[:, int(width * 0.35) : int(width * 0.65)])) / max(
+    yellow_ratio = float(np.count_nonzero(yellow_mask[:, int(detection_width * 0.35) : int(detection_width * 0.65)])) / max(
         1,
-        yellow_mask[:, int(width * 0.35) : int(width * 0.65)].size,
+        yellow_mask[:, int(detection_width * 0.35) : int(detection_width * 0.65)].size,
     )
     if yellow_ratio > 0.003 or vertical_center_lines:
         candidates.append(
@@ -444,6 +456,32 @@ def _detect_road_markings(image: np.ndarray, frame_id: str) -> list[dict]:
             }
         )
     return candidates
+
+
+def _downscale_for_marking_detection(image: np.ndarray, max_width: int = 240) -> tuple[np.ndarray, float]:
+    height, width = image.shape[:2]
+    if width <= max_width:
+        return image, 1.0
+    scale = max_width / float(width)
+    resized = cv2.resize(
+        image,
+        (max_width, max(1, int(round(height * scale)))),
+        interpolation=cv2.INTER_AREA,
+    )
+    return resized, scale
+
+
+def _scale_bbox_to_source(bbox: list[int], scale: float, width: int, height: int) -> list[int]:
+    if scale == 1.0:
+        return bbox
+    x1, y1, x2, y2 = bbox
+    inv = 1.0 / scale
+    return [
+        max(0, min(width - 1, int(round(x1 * inv)))),
+        max(0, min(height - 1, int(round(y1 * inv)))),
+        max(0, min(width - 1, int(round(x2 * inv)))),
+        max(0, min(height - 1, int(round(y2 * inv)))),
+    ]
 
 
 def _cluster_line_positions(values: list[int], tolerance: int) -> list[float]:

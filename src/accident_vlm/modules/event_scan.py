@@ -11,6 +11,8 @@ from accident_vlm.schemas.preprocessing import SelectedFrame, VideoMetadata
 from accident_vlm.utils.timecode import frame_to_timecode, parse_timecode, seconds_to_timecode
 from accident_vlm.modules.video_sampling import iter_sampled_capture_frames
 
+_EVENT_SCAN_FLOW_SIZE = (96, 54)
+
 
 def scan_video_event_candidates(
     video_path: Path,
@@ -47,7 +49,7 @@ def scan_video_event_candidates(
             sample_step,
         ):
             gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-            small_gray = cv2.resize(gray, (160, 90), interpolation=cv2.INTER_AREA)
+            small_gray = cv2.resize(gray, _EVENT_SCAN_FLOW_SIZE, interpolation=cv2.INTER_AREA)
             hist = cv2.calcHist([small_gray], [0], None, [32], [0, 256])
             cv2.normalize(hist, hist)
             if previous_gray is None or previous_hist is None or previous_frame_index is None:
@@ -70,7 +72,7 @@ def scan_video_event_candidates(
                 0,
             )
             flow_magnitude = np.linalg.norm(flow, axis=2)
-            optical_flow_peak = float(np.percentile(flow_magnitude, 95))
+            optical_flow_peak = _fast_percentile_value(flow_magnitude, 95.0)
             optical_flow_mean = float(flow_magnitude.mean())
             correlation = float(cv2.compareHist(previous_hist, hist, cv2.HISTCMP_CORREL))
             histogram_change = max(0.0, 1.0 - correlation) * 100.0
@@ -115,6 +117,15 @@ def _event_scan_score(
 ) -> int:
     score = frame_diff * 1.4 + optical_flow_peak * 7.0 + optical_flow_mean * 3.0 + histogram_change * 0.9
     return max(0, min(100, int(round(score))))
+
+
+def _fast_percentile_value(values: np.ndarray, percentile: float) -> float:
+    if values.size == 0:
+        return 0.0
+    flat = values.reshape(-1)
+    rank = int(np.ceil(flat.size * percentile / 100.0)) - 1
+    rank = max(0, min(flat.size - 1, rank))
+    return float(np.partition(flat, rank)[rank])
 
 
 def _build_event_scan_candidate(
