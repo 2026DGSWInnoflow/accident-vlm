@@ -177,6 +177,7 @@ def test_cli_module_fast_analyze_exits_before_typer_import(tmp_path: Path) -> No
 import cv2
 import json
 import numpy as np
+from pathlib import Path
 import runpy
 import sys
 
@@ -211,3 +212,53 @@ print(json.dumps({{"typer_loaded": "typer" in sys.modules}}))
 
     assert json.loads(result.stdout.strip().splitlines()[-1]) == {"typer_loaded": False}
     assert output_path.exists()
+
+
+def test_cli_module_speed_mode_fast_exits_before_pipeline_import(tmp_path: Path) -> None:
+    video_path = tmp_path / "sample.mp4"
+    output_path = tmp_path / "context.json"
+    script = f"""
+import cv2
+import json
+import numpy as np
+from pathlib import Path
+import runpy
+import sys
+
+video_path = {str(video_path)!r}
+writer = cv2.VideoWriter(video_path, cv2.VideoWriter_fourcc(*"mp4v"), 5, (32, 24))
+for _ in range(3):
+    writer.write(np.zeros((24, 32, 3), dtype=np.uint8))
+writer.release()
+
+sys.argv = [
+    "accident-vlm",
+    "analyze",
+    video_path,
+    {str(output_path)!r},
+    "--speed-mode",
+    "fast",
+]
+try:
+    runpy.run_module("accident_vlm.cli", run_name="__main__")
+except SystemExit:
+    pass
+output = json.loads(Path({str(output_path)!r}).read_text(encoding="utf-8"))
+print(json.dumps({{
+    "pipeline_loaded": "accident_vlm.pipeline" in sys.modules,
+    "selected_frames": len(output["selected_frames"]),
+    "evidence_frames": len(output["evidence_package"]["frames"]),
+}}))
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert json.loads(result.stdout.strip().splitlines()[-1]) == {
+        "pipeline_loaded": False,
+        "selected_frames": 1,
+        "evidence_frames": 1,
+    }
