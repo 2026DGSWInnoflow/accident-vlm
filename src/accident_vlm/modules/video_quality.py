@@ -6,6 +6,7 @@ import cv2
 import numpy as np
 
 from accident_vlm.modules.image_metrics import gray_percentile_range
+from accident_vlm.modules.image_io import read_cv_image
 from accident_vlm.modules.video_sampling import iter_capture_frames_at_indices
 from accident_vlm.schemas.preprocessing import InputQuality, SelectedFrame
 from accident_vlm.utils.timecode import parse_timecode
@@ -26,18 +27,6 @@ def analyze_input_quality(
     selected_frames: list[SelectedFrame],
     event_windows: list[dict] | None = None,
 ) -> InputQuality:
-    capture = cv2.VideoCapture(str(video_path))
-    if not capture.isOpened():
-        return InputQuality(
-            blur="high",
-            brightness="dark",
-            night_noise="high",
-            camera_shake="unknown",
-            occlusion="unknown",
-            analysis_reliability="low",
-            visibility_conditions={"video_open_failed": True},
-        )
-
     blur_scores: list[float] = []
     brightness_scores: list[float] = []
     noise_scores: list[float] = []
@@ -48,81 +37,102 @@ def analyze_input_quality(
     previous_motion_gray: np.ndarray | None = None
     previous_frame: SelectedFrame | None = None
 
-    frames_by_index = {frame.frame_index: frame for frame in selected_frames[:30]}
-    for frame_index, image in iter_capture_frames_at_indices(
-        capture,
-        list(frames_by_index),
-    ):
-        frame = frames_by_index[frame_index]
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        blur_score = float(cv2.Laplacian(gray, cv2.CV_64F).var())
-        brightness_score = float(gray.mean())
-        noise_score = float(gray.std())
-        glare_ratio = float((gray >= 245).mean())
-        dark_ratio = float((gray <= 25).mean())
-        contrast_score = gray_percentile_range(gray)
-        motion_gray = _motion_gray(gray)
-        blur_scores.append(blur_score)
-        brightness_scores.append(brightness_score)
-        noise_scores.append(noise_score)
-        motion_score = 0.0
-        compensated_motion_score = 0.0
-        if previous_motion_gray is not None:
-            if not _can_skip_motion_flow(previous_motion_gray, motion_gray):
-                flow = cv2.calcOpticalFlowFarneback(
-                    previous_motion_gray,
-                    motion_gray,
-                    None,
-                    0.5,
-                    3,
-                    15,
-                    3,
-                    5,
-                    1.2,
-                    0,
+    frame_images = _read_extracted_frame_images(selected_frames[:30])
+    capture = None
+    if frame_images is None:
+        capture = cv2.VideoCapture(str(video_path))
+        if not capture.isOpened():
+            return InputQuality(
+                blur="high",
+                brightness="dark",
+                night_noise="high",
+                camera_shake="unknown",
+                occlusion="unknown",
+                analysis_reliability="low",
+                visibility_conditions={"video_open_failed": True},
+            )
+        frames_by_index = {frame.frame_index: frame for frame in selected_frames[:30]}
+        frame_images = [
+            (frames_by_index[frame_index], image)
+            for frame_index, image in iter_capture_frames_at_indices(
+                capture,
+                list(frames_by_index),
+            )
+        ]
+
+    try:
+        for frame, image in frame_images:
+            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+            blur_score = float(cv2.Laplacian(gray, cv2.CV_64F).var())
+            brightness_score = float(gray.mean())
+            noise_score = float(gray.std())
+            glare_ratio = float((gray >= 245).mean())
+            dark_ratio = float((gray <= 25).mean())
+            contrast_score = gray_percentile_range(gray)
+            motion_gray = _motion_gray(gray)
+            blur_scores.append(blur_score)
+            brightness_scores.append(brightness_score)
+            noise_scores.append(noise_score)
+            motion_score = 0.0
+            compensated_motion_score = 0.0
+            if previous_motion_gray is not None:
+                if not _can_skip_motion_flow(previous_motion_gray, motion_gray):
+                    flow = cv2.calcOpticalFlowFarneback(
+                        previous_motion_gray,
+                        motion_gray,
+                        None,
+                        0.5,
+                        3,
+                        15,
+                        3,
+                        5,
+                        1.2,
+                        0,
+                    )
+                    motion_score = float(np.linalg.norm(flow, axis=2).mean())
+                    compensated_motion_score = _ego_motion_compensated_delta(previous_motion_gray, motion_gray)
+                motion_scores.append(motion_score)
+                compensated_motion_scores.append(compensated_motion_score)
+                motion_observations.append(
+                    {
+                        "value": motion_score,
+                        "ego_motion_compensated_value": compensated_motion_score,
+                        "time": frame.time,
+                        "evidence": [
+                            previous_frame.id if previous_frame else frame.id,
+                            frame.id,
+                        ],
+                    }
                 )
-                motion_score = float(np.linalg.norm(flow, axis=2).mean())
-                compensated_motion_score = _ego_motion_compensated_delta(previous_motion_gray, motion_gray)
-            motion_scores.append(motion_score)
-            compensated_motion_scores.append(compensated_motion_score)
-            motion_observations.append(
+            timeline.append(
                 {
-                    "value": motion_score,
-                    "ego_motion_compensated_value": compensated_motion_score,
+                    "frame_id": frame.id,
                     "time": frame.time,
-                    "evidence": [
-                        previous_frame.id if previous_frame else frame.id,
-                        frame.id,
-                    ],
+                    "purpose": frame.purpose,
+                    "blur_score": round(blur_score, 3),
+                    "brightness_score": round(brightness_score, 3),
+                    "noise_score": round(noise_score, 3),
+                    "motion_score": round(motion_score, 3),
+                    "ego_motion_compensated_motion_score": round(compensated_motion_score, 3),
+                    "glare_ratio": round(glare_ratio, 5),
+                    "dark_ratio": round(dark_ratio, 5),
+                    "contrast_score": round(contrast_score, 3),
+                    "blur_type": _blur_type(blur_score, motion_score, compensated_motion_score),
+                    "quality_flags": _frame_quality_flags(
+                        blur_score,
+                        brightness_score,
+                        noise_score,
+                        glare_ratio,
+                        dark_ratio,
+                        contrast_score,
+                    ),
                 }
             )
-        timeline.append(
-            {
-                "frame_id": frame.id,
-                "time": frame.time,
-                "purpose": frame.purpose,
-                "blur_score": round(blur_score, 3),
-                "brightness_score": round(brightness_score, 3),
-                "noise_score": round(noise_score, 3),
-                "motion_score": round(motion_score, 3),
-                "ego_motion_compensated_motion_score": round(compensated_motion_score, 3),
-                "glare_ratio": round(glare_ratio, 5),
-                "dark_ratio": round(dark_ratio, 5),
-                "contrast_score": round(contrast_score, 3),
-                "blur_type": _blur_type(blur_score, motion_score, compensated_motion_score),
-                "quality_flags": _frame_quality_flags(
-                    blur_score,
-                    brightness_score,
-                    noise_score,
-                    glare_ratio,
-                    dark_ratio,
-                    contrast_score,
-                ),
-            }
-        )
-        previous_motion_gray = motion_gray
-        previous_frame = frame
-    capture.release()
+            previous_motion_gray = motion_gray
+            previous_frame = frame
+    finally:
+        if capture is not None:
+            capture.release()
 
     if not blur_scores:
         return InputQuality(
@@ -178,6 +188,18 @@ def analyze_input_quality(
         segment_quality=_segment_quality(event_windows or [], timeline),
         visibility_conditions=visibility_conditions,
     )
+
+
+def _read_extracted_frame_images(frames: list[SelectedFrame]) -> list[tuple[SelectedFrame, np.ndarray]] | None:
+    if not frames or any(not frame.path for frame in frames):
+        return None
+    frame_images: list[tuple[SelectedFrame, np.ndarray]] = []
+    for frame in frames:
+        image = read_cv_image(frame.path)
+        if image is None:
+            return None
+        frame_images.append((frame, image))
+    return frame_images
 
 
 def _can_skip_motion_flow(previous_gray: np.ndarray, gray: np.ndarray) -> bool:

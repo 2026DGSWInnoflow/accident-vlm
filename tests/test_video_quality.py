@@ -137,6 +137,38 @@ def test_analyze_input_quality_scans_forward_without_random_seeks(monkeypatch, t
     ]
 
 
+def test_analyze_input_quality_reuses_extracted_frame_paths(monkeypatch, tmp_path) -> None:
+    frame_paths = []
+    for index in range(2):
+        image = np.full((48, 64, 3), 96 + index * 24, dtype=np.uint8)
+        path = tmp_path / f"frame_{index:06d}.jpg"
+        cv2.imwrite(str(path), image)
+        frame_paths.append(path)
+
+    class FailingCapture:
+        def __init__(self, path):
+            raise AssertionError("quality analysis should reuse extracted frame paths")
+
+    monkeypatch.setattr(cv2, "VideoCapture", FailingCapture)
+
+    quality = analyze_input_quality(
+        tmp_path / "fake.mp4",
+        [
+            SelectedFrame(
+                id=f"frame_{index:06d}",
+                time=f"00:00.{index}00",
+                frame_index=index,
+                purpose="regular_context",
+                path=str(path),
+            )
+            for index, path in enumerate(frame_paths)
+        ],
+    )
+
+    assert [item["frame_id"] for item in quality.timeline] == ["frame_000000", "frame_000001"]
+    assert quality.brightness == "normal"
+
+
 def test_analyze_input_quality_downscales_optical_flow_inputs(monkeypatch, tmp_path) -> None:
     frames = []
     for index in range(3):
