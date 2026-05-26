@@ -33,6 +33,16 @@ def test_select_regular_frames_includes_exact_decimal_boundary() -> None:
     assert [frame.frame_index for frame in frames] == [0, 1, 2, 3]
 
 
+def test_select_regular_frames_avoids_decimal_runtime_dependency(monkeypatch) -> None:
+    import accident_vlm.modules.frame_selection as frame_selection
+
+    assert not hasattr(frame_selection, "Decimal")
+
+    frames = select_regular_frames(duration_sec=0.3, fps=10, interval_sec=0.1)
+
+    assert [frame.frame_index for frame in frames] == [0, 1, 2, 3]
+
+
 def test_select_regular_frames_deduplicates_rounded_frame_indices() -> None:
     frames = select_regular_frames(duration_sec=2.0, fps=1, interval_sec=0.4)
 

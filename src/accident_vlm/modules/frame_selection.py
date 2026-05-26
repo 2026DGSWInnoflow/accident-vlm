@@ -1,4 +1,4 @@
-from decimal import Decimal, ROUND_FLOOR
+import math
 from pathlib import Path
 
 import cv2
@@ -15,8 +15,7 @@ from accident_vlm.modules.video_sampling import (
 _MOTION_DIFF_SIZE = (96, 54)
 
 
-def _floor_decimal(value: Decimal) -> int:
-    return int(value.to_integral_value(rounding=ROUND_FLOOR))
+_FLOAT_BOUNDARY_EPSILON = 1e-9
 
 
 def select_regular_frames(
@@ -36,14 +35,11 @@ def select_regular_frames(
 
     frames: list[SelectedFrame] = []
     seen_frame_indices: set[int] = set()
-    duration = Decimal(str(duration_sec))
-    fps_decimal = Decimal(str(fps))
-    interval = Decimal(str(interval_sec))
-    step_count = _floor_decimal(duration / interval)
-    max_frame_index = _floor_decimal(duration * fps_decimal)
+    step_count = math.floor((duration_sec / interval_sec) + _FLOAT_BOUNDARY_EPSILON)
+    max_frame_index = math.floor((duration_sec * fps) + _FLOAT_BOUNDARY_EPSILON)
 
     for step_index in range(step_count + 1):
-        current = float(Decimal(step_index) * interval)
+        current = step_index * interval_sec
         frame_index = int(round(current * fps))
         if frame_index in seen_frame_indices or frame_index > max_frame_index:
             continue
