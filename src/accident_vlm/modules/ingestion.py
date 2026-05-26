@@ -12,6 +12,9 @@ class IngestionError(ValueError):
     """Raised when ffprobe output cannot be converted into video metadata."""
 
 
+_FFPROBE_AVAILABLE: bool | None = None
+
+
 def parse_ffprobe_streams(data: dict[str, Any]) -> VideoMetadata:
     streams = data.get("streams", [])
     video_stream = _first_video_stream(streams)
@@ -34,6 +37,10 @@ def parse_ffprobe_streams(data: dict[str, Any]) -> VideoMetadata:
 
 
 def probe_video(video_path: Path) -> VideoMetadata:
+    global _FFPROBE_AVAILABLE
+    if _FFPROBE_AVAILABLE is False:
+        return probe_video_with_opencv(video_path)
+
     try:
         result = subprocess.run(
             [
@@ -50,8 +57,10 @@ def probe_video(video_path: Path) -> VideoMetadata:
             capture_output=True,
             text=True,
         )
+        _FFPROBE_AVAILABLE = True
         return parse_ffprobe_streams(json.loads(result.stdout))
     except FileNotFoundError:
+        _FFPROBE_AVAILABLE = False
         return probe_video_with_opencv(video_path)
 
 

@@ -200,3 +200,20 @@ def test_probe_video_requests_format_metadata_from_ffprobe():
     command = run.call_args.args[0]
     assert "-show_streams" in command
     assert "-show_format" in command
+
+
+def test_probe_video_caches_missing_ffprobe_between_calls(monkeypatch):
+    calls = []
+    metadata = object()
+
+    def fake_run(*args, **kwargs):
+        calls.append(args)
+        raise FileNotFoundError
+
+    monkeypatch.setattr("accident_vlm.modules.ingestion._FFPROBE_AVAILABLE", None)
+    monkeypatch.setattr("accident_vlm.modules.ingestion.subprocess.run", fake_run)
+    monkeypatch.setattr("accident_vlm.modules.ingestion.probe_video_with_opencv", lambda path: metadata)
+
+    assert probe_video(Path("first.mp4")) is metadata
+    assert probe_video(Path("second.mp4")) is metadata
+    assert len(calls) == 1
