@@ -23,6 +23,7 @@ from accident_vlm.modules.vlm_composer import (
     _image_data_url,
     _is_retriable_vlm_error,
     _read_http_error_detail,
+    _auto_cuda_max_memory,
     _model_dtype,
     _parse_max_memory,
     _prepare_transformers_runtime_env,
@@ -785,6 +786,42 @@ def test_parse_max_memory_accepts_gpu_and_cpu_entries() -> None:
         3: "22GiB",
         "cpu": "64GiB",
     }
+
+
+def test_auto_cuda_max_memory_uses_visible_free_memory(monkeypatch) -> None:
+    class FakeCuda:
+        @staticmethod
+        def is_available() -> bool:
+            return True
+
+        @staticmethod
+        def device_count() -> int:
+            return 2
+
+        @staticmethod
+        def mem_get_info(index: int) -> tuple[int, int]:
+            free_by_index = {
+                0: 10 * 1024 * 1024 * 1024,
+                1: 20 * 1024 * 1024 * 1024,
+            }
+            return free_by_index[index], 24 * 1024 * 1024 * 1024
+
+    class FakeTorch:
+        cuda = FakeCuda()
+
+    monkeypatch.delenv("ACCIDENT_VLM_AUTO_MAX_MEMORY", raising=False)
+    monkeypatch.setenv("ACCIDENT_VLM_AUTO_MAX_MEMORY_FRACTION", "0.8")
+
+    assert _auto_cuda_max_memory(FakeTorch) == {
+        0: "8192MiB",
+        1: "16384MiB",
+    }
+
+
+def test_auto_cuda_max_memory_can_be_disabled(monkeypatch) -> None:
+    monkeypatch.setenv("ACCIDENT_VLM_AUTO_MAX_MEMORY", "0")
+
+    assert _auto_cuda_max_memory(object()) == {}
 
 
 def test_qwen_alias_maps_to_local_awq_int4_model() -> None:

@@ -588,7 +588,7 @@ class TransformersQwenBackend:
             "trust_remote_code": True,
             "attn_implementation": _attn_implementation(),
         }
-        max_memory = _parse_max_memory(os.getenv("ACCIDENT_VLM_MAX_MEMORY"))
+        max_memory = _parse_max_memory(os.getenv("ACCIDENT_VLM_MAX_MEMORY")) or _auto_cuda_max_memory()
         if max_memory:
             model_kwargs["max_memory"] = max_memory
         with disable_transformers_allocator_warmup():
@@ -1009,6 +1009,26 @@ def _parse_max_memory(raw_value: str | None) -> dict[Any, str]:
             normalized_key = int(normalized_key)
         max_memory[normalized_key] = value.strip()
     return max_memory
+
+
+def _auto_cuda_max_memory(torch_module: Any | None = None) -> dict[Any, str]:
+    if os.getenv("ACCIDENT_VLM_AUTO_MAX_MEMORY", "1").lower() not in {"1", "true", "yes", "on"}:
+        return {}
+    fraction = float(os.getenv("ACCIDENT_VLM_AUTO_MAX_MEMORY_FRACTION", "0.9"))
+    try:
+        torch = torch_module
+        if torch is None:
+            import torch as torch  # type: ignore[no-redef]
+        if not torch.cuda.is_available():
+            return {}
+        max_memory: dict[Any, str] = {}
+        for index in range(torch.cuda.device_count()):
+            free_bytes, _total_bytes = torch.cuda.mem_get_info(index)
+            allowed_mib = max(1, int((free_bytes * fraction) // (1024 * 1024)))
+            max_memory[index] = f"{allowed_mib}MiB"
+        return max_memory
+    except Exception:
+        return {}
 
 
 def _prepare_transformers_runtime_env() -> None:
