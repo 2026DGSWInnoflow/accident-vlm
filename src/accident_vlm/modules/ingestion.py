@@ -1,6 +1,7 @@
 import json
 import math
 import subprocess
+from collections import OrderedDict
 from fractions import Fraction
 from pathlib import Path
 from typing import Any
@@ -13,6 +14,8 @@ class IngestionError(ValueError):
 
 
 _FFPROBE_AVAILABLE: bool | None = None
+_VIDEO_METADATA_CACHE_MAX_SIZE = 64
+_VIDEO_METADATA_CACHE: OrderedDict[tuple[str, int, int], Any] = OrderedDict()
 
 
 def parse_ffprobe_streams(data: dict[str, Any]) -> VideoMetadata:
@@ -37,6 +40,23 @@ def parse_ffprobe_streams(data: dict[str, Any]) -> VideoMetadata:
 
 
 def probe_video(video_path: Path) -> VideoMetadata:
+    cache_key = _video_metadata_cache_key(video_path)
+    if cache_key is not None:
+        cached_metadata = _VIDEO_METADATA_CACHE.get(cache_key)
+        if cached_metadata is not None:
+            _VIDEO_METADATA_CACHE.move_to_end(cache_key)
+            return cached_metadata
+
+    metadata = _probe_video_uncached(video_path)
+    if cache_key is not None:
+        _VIDEO_METADATA_CACHE[cache_key] = metadata
+        _VIDEO_METADATA_CACHE.move_to_end(cache_key)
+        while len(_VIDEO_METADATA_CACHE) > _VIDEO_METADATA_CACHE_MAX_SIZE:
+            _VIDEO_METADATA_CACHE.popitem(last=False)
+    return metadata
+
+
+def _probe_video_uncached(video_path: Path) -> VideoMetadata:
     global _FFPROBE_AVAILABLE
     if _FFPROBE_AVAILABLE is False:
         return probe_video_with_opencv(video_path)
@@ -62,6 +82,14 @@ def probe_video(video_path: Path) -> VideoMetadata:
     except FileNotFoundError:
         _FFPROBE_AVAILABLE = False
         return probe_video_with_opencv(video_path)
+
+
+def _video_metadata_cache_key(video_path: Path) -> tuple[str, int, int] | None:
+    try:
+        stat = video_path.stat()
+    except OSError:
+        return None
+    return (str(video_path.resolve()), stat.st_mtime_ns, stat.st_size)
 
 
 def probe_video_with_opencv(video_path: Path) -> VideoMetadata:

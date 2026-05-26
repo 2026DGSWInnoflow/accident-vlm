@@ -217,3 +217,40 @@ def test_probe_video_caches_missing_ffprobe_between_calls(monkeypatch):
     assert probe_video(Path("first.mp4")) is metadata
     assert probe_video(Path("second.mp4")) is metadata
     assert len(calls) == 1
+
+
+def test_probe_video_caches_metadata_by_file_identity(monkeypatch, tmp_path):
+    video_path = tmp_path / "sample.mp4"
+    video_path.write_bytes(b"first")
+    calls = []
+
+    def fake_probe_with_opencv(path):
+        calls.append(Path(path))
+        return parse_ffprobe_streams(
+            {
+                "streams": [
+                    {
+                        "codec_type": "video",
+                        "width": 640,
+                        "height": 480,
+                        "avg_frame_rate": "30/1",
+                        "nb_frames": str(30 + len(calls)),
+                        "duration": "1.0",
+                    }
+                ]
+            }
+        )
+
+    monkeypatch.setattr("accident_vlm.modules.ingestion._FFPROBE_AVAILABLE", False)
+    monkeypatch.setattr("accident_vlm.modules.ingestion.probe_video_with_opencv", fake_probe_with_opencv)
+
+    first = probe_video(video_path)
+    second = probe_video(video_path)
+
+    video_path.write_bytes(b"changed payload")
+    third = probe_video(video_path)
+
+    assert first is second
+    assert third is not first
+    assert third.frame_count == 32
+    assert calls == [video_path, video_path]
