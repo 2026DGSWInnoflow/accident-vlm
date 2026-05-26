@@ -1,9 +1,7 @@
 import json
-import urllib.error
 
 from accident_vlm.modules.vlm_composer import (
     SYSTEM_PROMPT,
-    build_interleaved_content,
     build_qwen_interleaved_content,
     build_vlm_prompt,
     compose_with_backend,
@@ -13,16 +11,13 @@ from accident_vlm.modules.vlm_composer import (
     normalize_model_id,
     normalize_device,
     disable_transformers_allocator_warmup,
-    OpenAICompatibleVLMBackend,
     TransformersQwenBackend,
     parse_json_response,
     render_qwen_chat_template,
     _configure_transformers_loading,
     _collect_evidence_image_paths,
     _format_non_retriable_vlm_error,
-    _image_data_url,
     _is_retriable_vlm_error,
-    _read_http_error_detail,
     _auto_cuda_max_memory,
     _model_dtype,
     _parse_max_memory,
@@ -44,32 +39,6 @@ class RecordingBackend:
         self.image_paths = image_paths
         self.image_records = image_records
         return {"schema_version": "accident_video_facts.v1"}
-
-
-class RecordingChunkBackend:
-    def __init__(self) -> None:
-        self.calls = []
-
-    def _generate_text(
-        self,
-        prompt: str,
-        image_paths: list[str],
-        max_tokens: int,
-        image_records=None,
-        chunk_label=None,
-    ) -> str:
-        self.calls.append(
-            {
-                "prompt": prompt,
-                "image_paths": list(image_paths),
-                "max_tokens": max_tokens,
-                "image_records": image_records,
-                "chunk_label": chunk_label,
-            }
-        )
-        if image_paths:
-            return f"{chunk_label} saw {len(image_paths)} images"
-        return '{"schema_version":"accident_video_facts.v1","objective_summary":"ok"}'
 
 
 class FlakyBackend:
@@ -258,29 +227,28 @@ def test_build_vlm_prompt_includes_storyboard_and_generic_candidate_checks() -> 
     assert "accident_type_candidates" in prompt
 
 
-def test_build_interleaved_content_places_storyboard_text_before_each_image():
-    evidence_package = {
-        "vlm_storyboard": [
-            {
-                "slot": 1,
-                "path": "/tmp/a.jpg",
-                "time": "00:01.000",
-                "phase": "scene_context",
-                "role": "도로 구조 확인",
-                "why_selected": "regular context",
-                "linked_actor_ids": ["T1"],
-                "precomputed_hints": {"visible_actor_candidates": ["승용차"]},
-            }
-        ]
-    }
+def test_build_qwen_interleaved_content_places_storyboard_text_before_each_image():
+    image = object()
+    image_records = [
+        {
+            "slot": 1,
+            "path": "/tmp/a.jpg",
+            "time": "00:01.000",
+            "phase": "scene_context",
+            "role": "도로 구조 확인",
+            "why_selected": "regular context",
+            "linked_actor_ids": ["T1"],
+            "precomputed_hints": {"visible_actor_candidates": ["승용차"]},
+        }
+    ]
 
-    content = build_interleaved_content("prompt", ["/tmp/a.jpg"], evidence_package)
+    content = build_qwen_interleaved_content("prompt", [image], ["/tmp/a.jpg"], image_records)
 
     assert content[0]["type"] == "text"
     assert "Frame 01" in content[0]["text"]
     assert "00:01.000" in content[0]["text"]
     assert "scene_context" in content[0]["text"]
-    assert content[1]["type"] == "image_url"
+    assert content[1] == {"type": "image", "image": image}
     assert content[-1] == {"type": "text", "text": "prompt"}
 
 
@@ -407,9 +375,9 @@ def test_compose_with_retry_does_not_retry_non_retriable_weight_packed_error() -
             max_attempts=3,
         )
     except RuntimeError as exc:
-        assert "ACCIDENT_VLM_BACKEND=openai" in str(exc)
+        assert "local Qwen3.6-35B-A3B" in str(exc)
     else:
-        raise AssertionError("expected non-retryable AWQ backend error")
+        raise AssertionError("expected non-retryable VLM backend error")
 
     assert backend.calls == 1
 
@@ -417,9 +385,8 @@ def test_compose_with_retry_does_not_retry_non_retriable_weight_packed_error() -
 def test_non_retriable_weight_packed_error_has_actionable_message() -> None:
     message = _format_non_retriable_vlm_error(KeyError("weight_packed"))
 
-    assert "AWQ/compressed-tensors" in message
-    assert "vLLM/SGLang" in message
-    assert "Transformers-compatible checkpoint" in message
+    assert "weight_packed" in message
+    assert "local Qwen3.6-35B-A3B" in message
 
 
 def test_retriable_vlm_error_only_retries_oom_and_json_errors() -> None:
@@ -516,198 +483,6 @@ def test_qwen_generate_json_chunks_images_without_dropping_evidence(monkeypatch)
     assert "Use all chunk observations below as evidence" in calls[-1][0]
 
 
-def test_image_data_url_encodes_local_image(tmp_path) -> None:
-    image_path = tmp_path / "sample.jpg"
-    image_path.write_bytes(b"abc")
-
-    assert _image_data_url(str(image_path)) == "data:image/jpeg;base64,YWJj"
-
-
-def test_openai_compatible_backend_posts_chat_completion(monkeypatch, tmp_path) -> None:
-    image_path = tmp_path / "sample.jpg"
-    image_path.write_bytes(b"abc")
-    captured = {}
-
-    class FakeResponse:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            return False
-
-        def read(self) -> bytes:
-            return json.dumps(
-                {
-                    "choices": [
-                        {
-                            "message": {
-                                "content": (
-                                    '{"schema_version":"accident_video_facts.v1",'
-                                    '"objective_summary":"ok"}'
-                                )
-                            }
-                        }
-                    ]
-                }
-            ).encode("utf-8")
-
-    def fake_urlopen(request, timeout):
-        captured["url"] = request.full_url
-        captured["timeout"] = timeout
-        captured["payload"] = json.loads(request.data.decode("utf-8"))
-        captured["headers"] = dict(request.header_items())
-        return FakeResponse()
-
-    monkeypatch.setattr("accident_vlm.modules.vlm_composer.urllib.request.urlopen", fake_urlopen)
-
-    backend = OpenAICompatibleVLMBackend(
-        model_id="qwen-awq",
-        base_url="http://localhost:30000/v1/",
-        api_key="secret",
-        timeout_sec=123,
-    )
-
-    result = backend.generate_json("prompt", [str(image_path)])
-
-    assert result["objective_summary"] == "ok"
-    assert captured["url"] == "http://localhost:30000/v1/chat/completions"
-    assert captured["timeout"] == 123
-    assert captured["payload"]["model"] == "qwen-awq"
-    assert captured["payload"]["temperature"] == 0
-    assert captured["payload"]["max_tokens"] == 1024
-    assert captured["payload"]["chat_template_kwargs"] == {"enable_thinking": False}
-    assert captured["payload"]["extra_body"]["chat_template_kwargs"] == {"enable_thinking": False}
-    assert captured["payload"]["top_p"] == 1
-    assert captured["payload"]["stop"] == ["<think>", "</think>"]
-    assert "Frame 01" in captured["payload"]["messages"][0]["content"][0]["text"]
-    assert captured["payload"]["messages"][0]["content"][1]["image_url"]["url"] == "data:image/jpeg;base64,YWJj"
-    assert captured["payload"]["messages"][0]["content"][-1] == {"type": "text", "text": "prompt"}
-    headers = {key.lower(): value for key, value in captured["headers"].items()}
-    assert headers["authorization"] == "Bearer secret"
-    assert headers["x-accident-vlm-image-count"] == "1"
-    assert headers["x-accident-vlm-max-tokens"] == "1024"
-    assert headers["x-accident-vlm-chunk"] == "direct"
-
-
-def test_openai_compatible_backend_includes_http_error_body(monkeypatch, tmp_path) -> None:
-    image_path = tmp_path / "sample.jpg"
-    image_path.write_bytes(b"abc")
-
-    def fake_urlopen(_request, timeout):
-        assert timeout == 300.0
-        raise urllib.error.HTTPError(
-            url="http://localhost:30000/v1/chat/completions",
-            code=400,
-            msg="Bad Request",
-            hdrs={},
-            fp=None,
-        )
-
-    monkeypatch.setattr("accident_vlm.modules.vlm_composer.urllib.request.urlopen", fake_urlopen)
-    monkeypatch.setattr(
-        "accident_vlm.modules.vlm_composer._read_http_error_detail",
-        lambda _error: '{"error":"model not found"}',
-    )
-    backend = OpenAICompatibleVLMBackend("wrong-model", "http://localhost:30000/v1")
-
-    try:
-        backend.generate_json("prompt", [str(image_path)])
-    except RuntimeError as exc:
-        assert "HTTP 400" in str(exc)
-        assert "model not found" in str(exc)
-    else:
-        raise AssertionError("expected HTTP error detail")
-
-
-def test_read_http_error_detail_reads_body() -> None:
-    class FakeBody:
-        def read(self) -> bytes:
-            return b'{"error":"bad request detail"}'
-
-        def close(self) -> None:
-            return None
-
-    error = urllib.error.HTTPError(
-        url="http://localhost",
-        code=400,
-        msg="Bad Request",
-        hdrs={},
-        fp=FakeBody(),
-    )
-
-    assert _read_http_error_detail(error) == '{"error":"bad request detail"}'
-
-
-def test_openai_compatible_backend_chunks_images_without_dropping_evidence(monkeypatch) -> None:
-    monkeypatch.setenv("ACCIDENT_VLM_IMAGE_CHUNK_SIZE", "2")
-    monkeypatch.setenv("ACCIDENT_VLM_CHUNK_MAX_NEW_TOKENS", "128")
-    monkeypatch.setenv("ACCIDENT_VLM_FINAL_MAX_NEW_TOKENS", "512")
-    backend = OpenAICompatibleVLMBackend("qwen-awq", "http://localhost:30000/v1")
-    calls = []
-
-    image_records = [
-        {"path": name, "slot": index + 1, "time": f"00:0{index}.000", "phase": "approach"}
-        for index, name in enumerate(["a.jpg", "b.jpg", "c.jpg", "d.jpg", "e.jpg"])
-    ]
-    reversed_image_records = list(reversed(image_records))
-
-    def fake_generate_text(
-        prompt: str,
-        image_paths: list[str],
-        max_tokens: int,
-        image_records=None,
-        chunk_label=None,
-    ) -> str:
-        calls.append((prompt, list(image_paths), max_tokens, image_records, chunk_label))
-        if image_paths:
-            return f"chunk saw {len(image_paths)} images"
-        return '{"schema_version":"accident_video_facts.v1","objective_summary":"ok"}'
-
-    backend._generate_text = fake_generate_text
-
-    result = backend.generate_json(
-        "full prompt with verbose evidence package",
-        ["a.jpg", "b.jpg", "c.jpg", "d.jpg", "e.jpg"],
-        reversed_image_records,
-    )
-
-    assert result["schema_version"] == "accident_video_facts.v1"
-    assert [images for _, images, _, _, _ in calls] == [
-        ["a.jpg", "b.jpg"],
-        ["c.jpg", "d.jpg"],
-        ["e.jpg"],
-        [],
-    ]
-    assert [tokens for _, _, tokens, _, _ in calls] == [128, 128, 128, 512]
-    assert [label for _, _, _, _, label in calls] == ["chunk 1/3", "chunk 2/3", "chunk 3/3", "final text-only"]
-    assert calls[0][3] == image_records[:2]
-    assert "chunk saw 2 images" in calls[-1][0]
-    assert "full prompt with verbose evidence package" not in calls[-1][0]
-    assert "insurance_claim_fields" in calls[-1][0]
-    assert "Use all chunk observations below as evidence" in calls[-1][0]
-
-
-def test_openai_backend_defaults_to_compact_chunked_text_only_final(monkeypatch) -> None:
-    monkeypatch.delenv("ACCIDENT_VLM_IMAGE_CHUNK_SIZE", raising=False)
-    monkeypatch.delenv("ACCIDENT_VLM_CHUNK_MAX_NEW_TOKENS", raising=False)
-    monkeypatch.delenv("ACCIDENT_VLM_FINAL_MAX_NEW_TOKENS", raising=False)
-    backend = OpenAICompatibleVLMBackend("qwen-awq", "http://localhost:30000/v1")
-    recorder = RecordingChunkBackend()
-    backend._generate_text = recorder._generate_text
-
-    result = backend.generate_json(
-        "full prompt " + ("x" * 1000),
-        [f"{index}.jpg" for index in range(8)],
-        [{"path": f"{index}.jpg"} for index in range(8)],
-    )
-
-    assert result["objective_summary"] == "ok"
-    assert [len(call["image_paths"]) for call in recorder.calls] == [4, 4, 0]
-    assert [call["max_tokens"] for call in recorder.calls] == [128, 128, 1024]
-    assert recorder.calls[-1]["chunk_label"] == "final text-only"
-    assert "full prompt" not in recorder.calls[-1]["prompt"]
-
-
 def test_compose_final_facts_returns_conservative_fallback_after_invalid_json(monkeypatch) -> None:
     monkeypatch.delenv("ACCIDENT_VLM_DISABLE_FALLBACK_JSON", raising=False)
     backend = InvalidJsonBackend()
@@ -727,55 +502,6 @@ def test_compose_final_facts_returns_conservative_fallback_after_invalid_json(mo
     assert output.schema_version == "accident_video_facts.v1"
     assert output.objective_summary == "VLM JSON 출력이 불완전하여 보수적 fallback 결과를 반환함."
     assert any("VLM JSON parsing failed" in item for item in output.uncertainties)
-
-
-def test_openai_chunked_backend_returns_chunk_fallback_when_final_json_is_invalid(monkeypatch) -> None:
-    monkeypatch.setenv("ACCIDENT_VLM_IMAGE_CHUNK_SIZE", "2")
-    backend = OpenAICompatibleVLMBackend("qwen-awq", "http://localhost:30000/v1")
-    calls = []
-
-    def fake_generate_text(prompt: str, image_paths: list[str], max_tokens: int, image_records=None, chunk_label=None):
-        calls.append((prompt, list(image_paths), chunk_label))
-        if image_paths:
-            return f"{chunk_label}: vehicle visible"
-        return '{"schema_version":"accident_video_facts.v1"'
-
-    backend._generate_text = fake_generate_text
-
-    result = backend.generate_json("prompt", ["a.jpg", "b.jpg", "c.jpg"], [{"path": "a.jpg"}])
-
-    assert result["schema_version"] == "accident_video_facts.v1"
-    assert result["evidence_index"]["fallback_reason"] == "chunked_final_json_parse_failure"
-    assert len(result["evidence_index"]["chunk_observations"]) == 2
-    assert "vehicle visible" in result["evidence_index"]["chunk_observations"][0]["observations"]
-    assert [call[2] for call in calls] == ["chunk 1/2", "chunk 2/2", "final text-only"]
-
-
-def test_get_qwen_backend_can_use_openai_compatible_backend(monkeypatch) -> None:
-    monkeypatch.setenv("ACCIDENT_VLM_BACKEND", "openai")
-    monkeypatch.setenv("ACCIDENT_VLM_OPENAI_BASE_URL", "http://localhost:8001/v1")
-    monkeypatch.setenv("ACCIDENT_VLM_OPENAI_API_KEY", "secret")
-    monkeypatch.setenv("ACCIDENT_VLM_OPENAI_TIMEOUT_SEC", "77")
-    get_qwen_backend.cache_clear()
-
-    backend = get_qwen_backend("served-model", "cuda:0")
-
-    assert isinstance(backend, OpenAICompatibleVLMBackend)
-    assert backend.model_id == "served-model"
-    assert backend.base_url == "http://localhost:8001/v1"
-    assert backend.api_key == "secret"
-    assert backend.timeout_sec == 77
-
-
-def test_get_qwen_backend_can_override_openai_served_model(monkeypatch) -> None:
-    monkeypatch.setenv("ACCIDENT_VLM_BACKEND", "openai")
-    monkeypatch.setenv("ACCIDENT_VLM_OPENAI_MODEL", "served-qwen-awq")
-    get_qwen_backend.cache_clear()
-
-    backend = get_qwen_backend("/local/path/Qwen3.6-27B-AWQ-INT4", "auto")
-
-    assert isinstance(backend, OpenAICompatibleVLMBackend)
-    assert backend.model_id == "served-qwen-awq"
 
 
 def test_parse_max_memory_accepts_gpu_and_cpu_entries() -> None:
@@ -824,8 +550,8 @@ def test_auto_cuda_max_memory_can_be_disabled(monkeypatch) -> None:
     assert _auto_cuda_max_memory(object()) == {}
 
 
-def test_qwen_alias_maps_to_local_awq_int4_model() -> None:
-    assert normalize_model_id("Qwen/Qwen3.6-27B") == "/home/minsung0830/accident-vlm/models/Qwen3.6-27B-AWQ-INT4"
+def test_qwen_alias_maps_to_local_35b_a3b_model() -> None:
+    assert normalize_model_id("Qwen/Qwen3.6-35B-A3B") == "/home/minsung0830/accident-vlm/models/Qwen3.6-35B-A3B"
 
 
 def test_prepare_transformers_runtime_env_defaults_to_tmp_cache(monkeypatch) -> None:
@@ -922,7 +648,7 @@ def test_compose_with_retry_clears_cuda_cache_after_failed_attempt(monkeypatch) 
 
 
 def test_normalize_model_id_maps_qwen_alias_to_local_model() -> None:
-    assert normalize_model_id("Qwen/Qwen3.6-27B") == "/home/minsung0830/accident-vlm/models/Qwen3.6-27B-AWQ-INT4"
+    assert normalize_model_id("Qwen/Qwen3.6-35B-A3B") == "/home/minsung0830/accident-vlm/models/Qwen3.6-35B-A3B"
 
 
 def test_get_qwen_backend_reuses_local_model_for_qwen_alias(monkeypatch) -> None:
@@ -938,11 +664,32 @@ def test_get_qwen_backend_reuses_local_model_for_qwen_alias(monkeypatch) -> None
     )
     get_qwen_backend.cache_clear()
 
-    first = get_qwen_backend("/home/minsung0830/accident-vlm/models/Qwen3.6-27B-AWQ-INT4", "auto")
-    second = get_qwen_backend("Qwen/Qwen3.6-27B", "auto")
+    first = get_qwen_backend("/home/minsung0830/accident-vlm/models/Qwen3.6-35B-A3B", "auto")
+    second = get_qwen_backend("Qwen/Qwen3.6-35B-A3B", "auto")
 
     assert first is second
-    assert created == [("/home/minsung0830/accident-vlm/models/Qwen3.6-27B-AWQ-INT4", "auto")]
+    assert created == [("/home/minsung0830/accident-vlm/models/Qwen3.6-35B-A3B", "auto")]
+
+
+def test_get_qwen_backend_ignores_external_backend_env(monkeypatch) -> None:
+    created = []
+
+    class FakeQwenBackend:
+        def __init__(self, model_id: str, device: str = "auto") -> None:
+            created.append((model_id, device))
+
+    monkeypatch.setenv("ACCIDENT_VLM_BACKEND", "openai")
+    monkeypatch.setenv("ACCIDENT_VLM_OPENAI_MODEL", "served-model")
+    monkeypatch.setattr(
+        "accident_vlm.modules.vlm_composer.TransformersQwenBackend",
+        FakeQwenBackend,
+    )
+    get_qwen_backend.cache_clear()
+
+    backend = get_qwen_backend("Qwen/Qwen3.6-35B-A3B", "cuda:0")
+
+    assert backend is not None
+    assert created == [("/home/minsung0830/accident-vlm/models/Qwen3.6-35B-A3B", "auto")]
 
 
 def test_normalize_device_pins_backend_to_auto_by_default(monkeypatch) -> None:
@@ -967,11 +714,11 @@ def test_get_qwen_backend_reuses_instance_across_device_aliases(monkeypatch) -> 
     )
     get_qwen_backend.cache_clear()
 
-    first = get_qwen_backend("Qwen/Qwen3.6-27B", "cuda:0")
-    second = get_qwen_backend("/home/minsung0830/accident-vlm/models/Qwen3.6-27B-AWQ-INT4", "balanced_low_0")
+    first = get_qwen_backend("Qwen/Qwen3.6-35B-A3B", "cuda:0")
+    second = get_qwen_backend("/home/minsung0830/accident-vlm/models/Qwen3.6-35B-A3B", "balanced_low_0")
 
     assert first is second
-    assert created == [("/home/minsung0830/accident-vlm/models/Qwen3.6-27B-AWQ-INT4", "auto")]
+    assert created == [("/home/minsung0830/accident-vlm/models/Qwen3.6-35B-A3B", "auto")]
 
 
 def test_transformers_backend_generation_uses_global_lock(monkeypatch) -> None:

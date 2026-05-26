@@ -33,7 +33,7 @@ class BenchmarkOptions:
     ocr_backend: str = "auto"
     object_detector_backend: str = "bytetrack"
     object_detector_model: str = "yolov8x.pt"
-    qwen_model_id: str = "/home/minsung0830/accident-vlm/models/Qwen3.6-27B-AWQ-INT4"
+    qwen_model_id: str = "/home/minsung0830/accident-vlm/models/Qwen3.6-35B-A3B"
     device: str = "auto"
     verify_tls: bool = True
     verbose: bool = False

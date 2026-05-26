@@ -1,11 +1,7 @@
 import ast
-import base64
 import importlib.util
 import json
-import mimetypes
 import os
-import urllib.error
-import urllib.request
 from contextlib import contextmanager
 from copy import deepcopy
 from functools import lru_cache
@@ -63,9 +59,9 @@ Required analysis discipline:
 """.strip()
 
 
-LOCAL_QWEN_MODEL_ID = "/home/minsung0830/accident-vlm/models/Qwen3.6-27B-AWQ-INT4"
+LOCAL_QWEN_MODEL_ID = "/home/minsung0830/accident-vlm/models/Qwen3.6-35B-A3B"
 QWEN_MODEL_ALIASES = {
-    "Qwen/Qwen3.6-27B": LOCAL_QWEN_MODEL_ID,
+    "Qwen/Qwen3.6-35B-A3B": LOCAL_QWEN_MODEL_ID,
 }
 QWEN_BACKEND_LOCK = Lock()
 
@@ -249,11 +245,10 @@ def _format_non_retriable_vlm_error(error: Exception) -> str:
     message = str(error)
     if "weight_packed" in message:
         return (
-            "AWQ/compressed-tensors checkpoint failed during Transformers generation "
+            "The configured checkpoint failed during Transformers generation "
             "with weight_packed tensors. This is not a retryable VLM output error. "
-            "Serve this AWQ model through vLLM/SGLang and set ACCIDENT_VLM_BACKEND=openai, "
-            "or use a Transformers-compatible checkpoint such as an FP8 model or a BF16-MTP "
-            f"AWQ variant. Original error: {message}"
+            "Use the local Qwen3.6-35B-A3B checkpoint configured for this pipeline. "
+            f"Original error: {message}"
         )
     return f"Non-retryable VLM backend error: {message}"
 
@@ -734,28 +729,6 @@ class TransformersQwenBackend:
         return image
 
 
-def build_interleaved_content(
-    prompt: str,
-    image_paths: list[str],
-    image_records_or_package: list[dict[str, Any]] | dict[str, Any] | None = None,
-    *,
-    encode_images: bool = False,
-) -> list[dict[str, Any]]:
-    records = _normalize_image_records_for_content(image_paths, image_records_or_package)
-    content: list[dict[str, Any]] = []
-    for index, path in enumerate(image_paths, start=1):
-        record = records.get(path, {})
-        content.append({"type": "text", "text": _storyboard_image_caption(index, path, record)})
-        content.append(
-            {
-                "type": "image_url",
-                "image_url": {"url": _image_data_url(path) if encode_images else path},
-            }
-        )
-    content.append({"type": "text", "text": prompt})
-    return content
-
-
 def build_qwen_interleaved_content(
     prompt: str,
     images: list[Any],
@@ -821,135 +794,6 @@ def _storyboard_image_caption(index: int, path: str, record: dict[str, Any]) -> 
     return "\n".join(fields)
 
 
-class OpenAICompatibleVLMBackend:
-    def __init__(
-        self,
-        model_id: str,
-        base_url: str,
-        api_key: str | None = None,
-        timeout_sec: float = 300.0,
-    ) -> None:
-        self.model_id = model_id
-        self.base_url = base_url.rstrip("/")
-        self.api_key = api_key
-        self.timeout_sec = timeout_sec
-
-    def generate_json(
-        self,
-        prompt: str,
-        image_paths: list[str],
-        image_records: list[dict[str, Any]] | None = None,
-    ) -> dict[str, Any]:
-        chunk_size = _image_chunk_size()
-        if chunk_size > 0 and (len(image_paths) > chunk_size or (_force_text_only_final() and len(image_paths) > 1)):
-            return self._generate_chunked_json(prompt, image_paths, image_records or [], chunk_size)
-        return parse_json_response(
-            self._generate_text(
-                prompt,
-                image_paths,
-                max_tokens=_final_max_new_tokens(),
-                image_records=image_records,
-                chunk_label="direct",
-            )
-        )
-
-    def _generate_chunked_json(
-        self,
-        prompt: str,
-        image_paths: list[str],
-        image_records: list[dict[str, Any]],
-        chunk_size: int,
-    ) -> dict[str, Any]:
-        chunk_summaries: list[dict[str, Any]] = []
-        total_chunks = (len(image_paths) + chunk_size - 1) // chunk_size
-        for chunk_index, start in enumerate(range(0, len(image_paths), chunk_size), start=1):
-            chunk_paths = image_paths[start : start + chunk_size]
-            chunk_records = _records_for_paths(chunk_paths, image_records)
-            chunk_prompt = (
-                "Analyze only this evidence image chunk. Do not decide fault or legal liability. "
-                "Return concise Korean observations grounded only in visible evidence.\n"
-                f"Chunk {chunk_index}/{total_chunks}; image indexes {start + 1}-{start + len(chunk_paths)}.\n\n"
-                "Focus on visible actors, traffic lights/signs, road type, lane markings, "
-                "weather/visibility, impact candidates, and uncertainty."
-            )
-            chunk_summaries.append(
-                {
-                    "chunk_index": chunk_index,
-                    "image_indexes": list(range(start + 1, start + len(chunk_paths) + 1)),
-                    "observations": self._generate_text(
-                        chunk_prompt,
-                        chunk_paths,
-                        max_tokens=_chunk_max_new_tokens(),
-                        image_records=chunk_records,
-                        chunk_label=f"chunk {chunk_index}/{total_chunks}",
-                    ),
-                }
-            )
-
-        final_prompt = _compact_chunked_final_prompt(chunk_summaries)
-        try:
-            return parse_json_response(
-                self._generate_text(
-                    final_prompt,
-                    [],
-                    max_tokens=_final_max_new_tokens(),
-                    chunk_label="final text-only",
-                )
-            )
-        except Exception as exc:
-            if _allow_fallback_json() and _is_json_error(exc):
-                return _fallback_payload_from_chunk_summaries(chunk_summaries, exc)
-            raise
-
-    def _generate_text(
-        self,
-        prompt: str,
-        image_paths: list[str],
-        max_tokens: int,
-        image_records: list[dict[str, Any]] | None = None,
-        chunk_label: str | None = None,
-    ) -> str:
-        content = build_interleaved_content(
-            prompt,
-            image_paths,
-            image_records or [],
-            encode_images=True,
-        )
-        payload = {
-            "model": self.model_id,
-            "messages": [{"role": "user", "content": content}],
-            "temperature": 0,
-            "top_p": 1,
-            "max_tokens": max_tokens,
-            "stop": ["<think>", "</think>"],
-            "chat_template_kwargs": {"enable_thinking": False},
-            "extra_body": {"chat_template_kwargs": {"enable_thinking": False}},
-        }
-        prompt_chars = sum(len(item.get("text", "")) for item in content if item.get("type") == "text")
-        request = urllib.request.Request(
-            f"{self.base_url}/chat/completions",
-            data=json.dumps(payload).encode("utf-8"),
-            headers={
-                **_openai_headers(self.api_key),
-                "X-Accident-Vlm-Image-Count": str(len(image_paths)),
-                "X-Accident-Vlm-Prompt-Chars": str(prompt_chars),
-                "X-Accident-Vlm-Max-Tokens": str(max_tokens),
-                "X-Accident-Vlm-Chunk": chunk_label or "unknown",
-            },
-            method="POST",
-        )
-        try:
-            with urllib.request.urlopen(request, timeout=self.timeout_sec) as response:  # noqa: S310
-                body = json.loads(response.read().decode("utf-8"))
-        except urllib.error.HTTPError as exc:
-            detail = _read_http_error_detail(exc)
-            raise RuntimeError(
-                f"OpenAI-compatible VLM request failed with HTTP {exc.code}: {detail}"
-            ) from exc
-        text = body["choices"][0]["message"]["content"]
-        return text
-
-
 def _build_chunked_final_prompt(
     chunk_summaries: list[dict[str, Any]],
     base_prompt: str | None = None,
@@ -970,30 +814,6 @@ def _build_chunked_final_prompt(
 
 def _compact_chunked_final_prompt(chunk_summaries: list[dict[str, Any]]) -> str:
     return _build_chunked_final_prompt(chunk_summaries)
-
-
-def _openai_headers(api_key: str | None) -> dict[str, str]:
-    headers = {"Content-Type": "application/json"}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
-    return headers
-
-
-def _read_http_error_detail(error: urllib.error.HTTPError) -> str:
-    try:
-        detail = error.read().decode("utf-8", errors="replace").strip()
-    except Exception:  # noqa: BLE001
-        detail = ""
-    if not detail:
-        detail = error.reason if isinstance(error.reason, str) else str(error)
-    return detail[:2000]
-
-
-def _image_data_url(path: str) -> str:
-    mime_type = mimetypes.guess_type(path)[0] or "image/jpeg"
-    data = Path(path).read_bytes()
-    encoded = base64.b64encode(data).decode("ascii")
-    return f"data:{mime_type};base64,{encoded}"
 
 
 def _parse_max_memory(raw_value: str | None) -> dict[Any, str]:
@@ -1090,12 +910,6 @@ _parse_json_response = parse_json_response
 
 @lru_cache(maxsize=1)
 def _get_qwen_backend(normalized_model_id: str, normalized_device: str = "auto") -> VLMBackend:
-    if os.getenv("ACCIDENT_VLM_BACKEND", "transformers").lower() in {"openai", "openai-compatible", "sglang", "vllm"}:
-        base_url = os.getenv("ACCIDENT_VLM_OPENAI_BASE_URL", "http://127.0.0.1:8001/v1")
-        api_key = os.getenv("ACCIDENT_VLM_OPENAI_API_KEY")
-        timeout_sec = float(os.getenv("ACCIDENT_VLM_OPENAI_TIMEOUT_SEC", "300"))
-        served_model_id = os.getenv("ACCIDENT_VLM_OPENAI_MODEL", normalized_model_id)
-        return OpenAICompatibleVLMBackend(served_model_id, base_url, api_key, timeout_sec)
     return TransformersQwenBackend(normalized_model_id, device=normalized_device)
 
 

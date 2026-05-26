@@ -611,7 +611,7 @@ Role: compose the final accident facts from images, crops, overlays, and precomp
 
 Model target:
 
-- `Qwen/Qwen3.6-27B` or a compatible Qwen multimodal serving setup.
+- `Qwen/Qwen3.6-35B-A3B` or a compatible Qwen multimodal serving setup.
 
 Prompt requirements:
 

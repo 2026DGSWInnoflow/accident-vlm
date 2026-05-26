@@ -40,7 +40,7 @@ accident-vlm analyze-full input.mp4 \
   --ocr-backend auto \
   --detector bytetrack \
   --detector-model yolov8x.pt \
-  --qwen-model Qwen/Qwen3.6-27B \
+  --qwen-model Qwen/Qwen3.6-35B-A3B \
   --device auto
 ```
 
@@ -75,15 +75,14 @@ export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export ACCIDENT_VLM_MAX_MEMORY="0:22GiB,1:22GiB,2:22GiB,3:22GiB,cpu:64GiB"
 ```
 
-By default the VLM is tuned for a roughly five-minute API target with a
-compressed 27B-class model: preprocessing may scan higher-frame evidence, then
-the VLM receives the top 20 prioritized/event-window evidence images resized to
-a 640px max side and caps final JSON generation at 512 tokens. Generation cache
-is disabled by default to reduce GPU0 KV-cache pressure, and CUDA OOM retries
-fall back to 12 images before compact text-only evidence.
+By default the VLM path is local Qwen3.6-35B-A3B through the Transformers
+backend. Preprocessing may scan higher-frame evidence, then the VLM receives the
+top 20 prioritized/event-window evidence images resized to a 640px max side and
+caps final JSON generation at 512 tokens. CUDA OOM retries fall back to 12
+images before compact text-only evidence.
 
 ```bash
-export ACCIDENT_VLM_QWEN_MODEL_ID="/home/minsung0830/accident-vlm/models/Qwen3.6-27B-FP8"
+export ACCIDENT_VLM_QWEN_MODEL_ID="/home/minsung0830/accident-vlm/models/Qwen3.6-35B-A3B"
 export ACCIDENT_VLM_MAX_IMAGES=20
 export ACCIDENT_VLM_OOM_RETRY_MAX_IMAGES=12
 export ACCIDENT_VLM_IMAGE_MAX_SIDE=640
@@ -93,28 +92,6 @@ export ACCIDENT_VLM_FINAL_MAX_NEW_TOKENS=512
 export ACCIDENT_VLM_MODEL_DTYPE=bfloat16
 export ACCIDENT_VLM_USE_CACHE=0
 ```
-
-AWQ/INT4 models that use compressed-tensors quantization require the `vlm`
-extra, or at minimum:
-
-```bash
-pip install compressed-tensors
-```
-
-Some AWQ/compressed-tensors checkpoints are not generation-compatible with
-direct Transformers loading and fail with `weight_packed` during generation.
-For those models, serve the AWQ model through an OpenAI-compatible vLLM/SGLang
-endpoint and point the API at that local endpoint:
-
-```bash
-export ACCIDENT_VLM_BACKEND=openai
-export ACCIDENT_VLM_OPENAI_BASE_URL="http://127.0.0.1:8001/v1"
-export ACCIDENT_VLM_OPENAI_TIMEOUT_SEC=300
-export ACCIDENT_VLM_QWEN_MODEL_ID="/home/minsung0830/accident-vlm/models/Qwen3.6-27B-AWQ-INT4"
-```
-
-If you want to keep the built-in Transformers backend, use a
-Transformers-compatible checkpoint such as FP8 or a BF16-MTP AWQ variant.
 
 ## API Server
 
@@ -161,7 +138,7 @@ curl -X POST http://localhost:8000/v1/jobs/upload \
   -F "ocr_backend=auto" \
   -F "object_detector_backend=bytetrack" \
   -F "object_detector_model=yolov8x.pt" \
-  -F "qwen_model_id=Qwen/Qwen3.6-27B" \
+  -F "qwen_model_id=Qwen/Qwen3.6-35B-A3B" \
   -F "device=auto"
 ```
 
