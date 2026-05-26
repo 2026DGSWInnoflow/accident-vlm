@@ -189,7 +189,7 @@ def analyze_video_pre_vlm(
         )
         context.ocr_summary = summarize_ocr_observations(context.ocr_observations)
 
-    if active_config.enable_actor_tracking:
+    if active_config.enable_actor_tracking and _detector_backend_enabled(active_config.object_detector_backend):
         detector = create_object_detector(
             active_config.object_detector_backend,
             active_config.object_detector_model,
@@ -347,6 +347,10 @@ def _collect_preprocessing_uncertainties(context: PipelineContext) -> list[str]:
 
 
 def _ocr_backend_enabled(name: str) -> bool:
+    return name.strip().lower() not in {"none", "disabled", "off", "false", "0"}
+
+
+def _detector_backend_enabled(name: str) -> bool:
     return name.strip().lower() not in {"none", "disabled", "off", "false", "0"}
 
 
