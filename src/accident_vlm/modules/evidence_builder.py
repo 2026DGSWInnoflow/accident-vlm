@@ -164,11 +164,30 @@ def _selected_frame_quality_by_id(context: PipelineContext) -> dict[str, dict]:
     if not context.input_quality:
         return {}
     quality_by_id: dict[str, dict] = {}
+    indexed_quality: list[tuple[int, dict]] = []
     for item in context.input_quality.timeline:
         if not isinstance(item, dict) or not item.get("frame_id"):
             continue
-        quality_by_id[str(item["frame_id"])] = _quality_from_timeline_item(item)
+        quality = _quality_from_timeline_item(item)
+        frame_id = str(item["frame_id"])
+        quality_by_id[frame_id] = quality
+        frame_index = _frame_index_from_id(frame_id)
+        if frame_index is not None:
+            indexed_quality.append((frame_index, quality))
+    if indexed_quality:
+        for frame in context.selected_frames:
+            if frame.id in quality_by_id:
+                continue
+            nearest_quality = min(indexed_quality, key=lambda item: abs(item[0] - frame.frame_index))[1]
+            quality_by_id[frame.id] = nearest_quality
     return quality_by_id
+
+
+def _frame_index_from_id(frame_id: str) -> int | None:
+    try:
+        return int(frame_id.rsplit("_", 1)[1])
+    except (IndexError, ValueError):
+        return None
 
 
 def _quality_from_timeline_item(item: dict) -> dict:

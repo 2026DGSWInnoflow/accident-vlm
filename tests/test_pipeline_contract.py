@@ -347,6 +347,61 @@ def test_build_evidence_package_reuses_input_quality_for_selected_frames(monkeyp
     assert quality["brightness_score"] == 128.0
 
 
+def test_build_evidence_package_reuses_nearest_input_quality_for_regular_frames(monkeypatch, tmp_path) -> None:
+    frame_path = tmp_path / "frame_000002.jpg"
+    frame_path.write_bytes(b"already extracted")
+    monkeypatch.setattr(
+        "accident_vlm.modules.evidence_scoring.read_cv_image",
+        lambda path: (_ for _ in ()).throw(
+            AssertionError("regular frames should reuse nearby input quality")
+        ),
+    )
+    context = PipelineContext(
+        video_path="sample.mp4",
+        video_metadata=VideoMetadata(
+            duration_sec=1.0,
+            fps=10,
+            resolution="640x480",
+            frame_count=10,
+            has_audio=False,
+        ),
+        input_quality=InputQuality(
+            blur="low",
+            brightness="normal",
+            night_noise="low",
+            camera_shake="low",
+            occlusion="unknown",
+            analysis_reliability="high",
+            timeline=[
+                {
+                    "frame_id": "frame_000000",
+                    "blur_score": 350.0,
+                    "brightness_score": 120.0,
+                    "noise_score": 8.0,
+                    "glare_ratio": 0.0,
+                    "contrast_score": 70.0,
+                    "quality_flags": [],
+                }
+            ],
+        ),
+        selected_frames=[
+            SelectedFrame(
+                id="frame_000002",
+                time="00:00.200",
+                frame_index=2,
+                path=str(frame_path),
+                purpose="regular_context",
+            )
+        ],
+    )
+
+    evidence_package = build_evidence_package(context)
+
+    quality = evidence_package["evidence_images"][0]["evidence_quality"]
+    assert quality["analysis_reliability"] == "high"
+    assert quality["brightness_score"] == 120.0
+
+
 def test_analyze_video_pre_vlm_merges_motion_keyframes_before_extraction(
     tmp_path, monkeypatch
 ) -> None:
