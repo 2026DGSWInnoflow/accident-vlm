@@ -1,5 +1,6 @@
 import json
 import math
+import shutil
 import subprocess
 from collections import OrderedDict
 from fractions import Fraction
@@ -59,6 +60,9 @@ def probe_video(video_path: Path) -> VideoMetadata:
 def _probe_video_uncached(video_path: Path) -> VideoMetadata:
     global _FFPROBE_AVAILABLE
     if _FFPROBE_AVAILABLE is False:
+        return probe_video_with_opencv(video_path)
+    if _FFPROBE_AVAILABLE is None and shutil.which("ffprobe") is None:
+        _FFPROBE_AVAILABLE = False
         return probe_video_with_opencv(video_path)
 
     try:

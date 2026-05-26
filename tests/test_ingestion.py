@@ -194,7 +194,10 @@ def test_probe_video_requests_format_metadata_from_ffprobe():
         stderr="",
     )
 
-    with patch("accident_vlm.modules.ingestion.subprocess.run", return_value=completed) as run:
+    with (
+        patch("accident_vlm.modules.ingestion.shutil.which", return_value="/usr/bin/ffprobe"),
+        patch("accident_vlm.modules.ingestion.subprocess.run", return_value=completed) as run,
+    ):
         probe_video(Path("sample.mp4"))
 
     command = run.call_args.args[0]
@@ -211,12 +214,27 @@ def test_probe_video_caches_missing_ffprobe_between_calls(monkeypatch):
         raise FileNotFoundError
 
     monkeypatch.setattr("accident_vlm.modules.ingestion._FFPROBE_AVAILABLE", None)
+    monkeypatch.setattr("accident_vlm.modules.ingestion.shutil.which", lambda name: "/usr/bin/ffprobe")
     monkeypatch.setattr("accident_vlm.modules.ingestion.subprocess.run", fake_run)
     monkeypatch.setattr("accident_vlm.modules.ingestion.probe_video_with_opencv", lambda path: metadata)
 
     assert probe_video(Path("first.mp4")) is metadata
     assert probe_video(Path("second.mp4")) is metadata
     assert len(calls) == 1
+
+
+def test_probe_video_skips_subprocess_when_ffprobe_missing_from_path(monkeypatch):
+    metadata = object()
+
+    def fail_run(*args, **kwargs):
+        raise AssertionError("ffprobe subprocess should not run when executable is missing")
+
+    monkeypatch.setattr("accident_vlm.modules.ingestion._FFPROBE_AVAILABLE", None)
+    monkeypatch.setattr("accident_vlm.modules.ingestion.shutil.which", lambda name: None)
+    monkeypatch.setattr("accident_vlm.modules.ingestion.subprocess.run", fail_run)
+    monkeypatch.setattr("accident_vlm.modules.ingestion.probe_video_with_opencv", lambda path: metadata)
+
+    assert probe_video(Path("sample.mp4")) is metadata
 
 
 def test_probe_video_caches_metadata_by_file_identity(monkeypatch, tmp_path):
