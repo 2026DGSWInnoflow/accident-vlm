@@ -147,3 +147,23 @@ def test_schemas_package_exports_input_quality():
     )
 
     assert quality.analysis_reliability == "high"
+
+
+def test_importing_preprocessing_schema_does_not_load_final_output_schema() -> None:
+    import subprocess
+    import sys
+
+    script = """
+import sys
+from accident_vlm.schemas.preprocessing import SelectedFrame
+print("accident_vlm.schemas.final_output" in sys.modules)
+print("accident_vlm.schemas.common" in sys.modules)
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.stdout.strip().splitlines() == ["False", "False"]
