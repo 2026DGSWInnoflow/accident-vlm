@@ -345,6 +345,17 @@ def build_frame_selection_contact_sheet(
     thumb_width: int = 240,
 ) -> dict[str, Any]:
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    readable_frame_paths = [Path(str(frame.path)) for frame in selected_frames if frame.path]
+    if _is_reusable_contact_sheet(output_path, readable_frame_paths):
+        return {
+            "id": "contact_sheet_frame_selection",
+            "path": str(output_path),
+            "purpose": "frame_selection_contact_sheet",
+            "source": "frame_selection",
+            "frame_count": len(readable_frame_paths),
+            "status": "reused",
+        }
+
     images: list[np.ndarray] = []
     for frame in selected_frames:
         if not frame.path:
@@ -412,3 +423,19 @@ def build_frame_selection_contact_sheet(
         "frame_count": len(images),
         "status": "created",
     }
+
+
+def _is_reusable_contact_sheet(output_path: Path, frame_paths: list[Path]) -> bool:
+    if not frame_paths:
+        return False
+    try:
+        output_mtime_ns = output_path.stat().st_mtime_ns
+    except OSError:
+        return False
+    for frame_path in frame_paths:
+        try:
+            if frame_path.stat().st_mtime_ns > output_mtime_ns:
+                return False
+        except OSError:
+            return False
+    return True

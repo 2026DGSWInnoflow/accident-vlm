@@ -280,7 +280,7 @@ def analyze_video_pre_vlm(
         run_output_dir / "reports" / "frame_selection_contact_sheet.jpg",
         title=f"{Path(video_path).name} frame selection",
     )
-    if contact_sheet.get("status") == "created":
+    if contact_sheet.get("status") in {"created", "reused"}:
         context.contact_sheets = [contact_sheet]
 
     if not context.preprocessing_uncertainties:

@@ -124,6 +124,37 @@ def test_build_frame_selection_contact_sheet_writes_review_image(tmp_path):
     assert cv2.imread(record["path"]) is not None
 
 
+def test_build_frame_selection_contact_sheet_reuses_fresh_output(monkeypatch, tmp_path):
+    frame_path = tmp_path / "frame.jpg"
+    image = np.zeros((64, 96, 3), dtype=np.uint8)
+    cv2.imwrite(str(frame_path), image)
+    output_path = tmp_path / "contact_sheet.jpg"
+    output_path.write_bytes(b"existing")
+    read_calls = []
+
+    monkeypatch.setattr(
+        "accident_vlm.modules.event_scan.read_cv_image",
+        lambda path: read_calls.append(path) or image,
+    )
+
+    record = build_frame_selection_contact_sheet(
+        [
+            SelectedFrame(
+                id="frame_000001",
+                time="00:00.033",
+                frame_index=1,
+                purpose="regular_context",
+                path=str(frame_path),
+            )
+        ],
+        output_path,
+    )
+
+    assert record["status"] == "reused"
+    assert record["path"] == str(output_path)
+    assert read_calls == []
+
+
 def test_scan_video_event_candidates_scans_forward_without_random_seeks(monkeypatch, tmp_path):
     frames = []
     for index in range(8):
