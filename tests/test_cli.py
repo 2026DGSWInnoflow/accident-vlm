@@ -1,4 +1,6 @@
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 from typer.testing import CliRunner
@@ -12,6 +14,28 @@ def test_cli_version_exits_successfully() -> None:
 
     assert result.exit_code == 0
     assert "0.1.0" in result.output
+
+
+def test_cli_import_defers_heavy_command_modules() -> None:
+    script = """
+import sys
+import accident_vlm.cli
+for name in (
+    "accident_vlm.benchmark",
+    "accident_vlm.evaluation",
+    "accident_vlm.modules.vlm_composer",
+    "accident_vlm.pipeline",
+):
+    print(name, name in sys.modules)
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "True" not in result.stdout
 
 
 def test_cli_analyze_writes_pre_vlm_context(monkeypatch, tmp_path: Path) -> None:

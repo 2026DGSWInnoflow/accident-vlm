@@ -6,16 +6,18 @@ import typer
 from rich import print
 
 from accident_vlm import __version__
-from accident_vlm.benchmark import BenchmarkOptions, run_api_benchmark
 from accident_vlm.config import DEFAULT_QWEN_MODEL_ID, PipelineConfig, QUALITY_OBJECT_DETECTOR_BACKEND
-from accident_vlm.evaluation import evaluate_result_against_label, load_dataset_labels, summarize_evaluation
-from accident_vlm.modules.vlm_composer import compose_final_facts, create_qwen_backend, write_final_facts
-from accident_vlm.pipeline import analyze_video_pre_vlm
 
 app = typer.Typer(
     help="Accident video fact extraction tools.",
     no_args_is_help=True,
 )
+
+
+def analyze_video_pre_vlm(video_path: Path, config: PipelineConfig):
+    from accident_vlm.pipeline import analyze_video_pre_vlm as implementation
+
+    return implementation(video_path=video_path, config=config)
 
 
 @app.callback(invoke_without_command=True)
@@ -102,6 +104,7 @@ def analyze_full(
         device=device,
         enable_vlm=True,
     )
+    from accident_vlm.modules.vlm_composer import compose_final_facts, create_qwen_backend, write_final_facts
     context = analyze_video_pre_vlm(video_path=video_path, config=config)
     pre_vlm_output_path.parent.mkdir(parents=True, exist_ok=True)
     pre_vlm_output_path.write_text(
@@ -123,6 +126,8 @@ def evaluate_dataset(
         "outputs/dataset_evaluation.json"
     ),
 ) -> None:
+    from accident_vlm.evaluation import evaluate_result_against_label, load_dataset_labels, summarize_evaluation
+
     labels = load_dataset_labels(label_root)
     items = []
     for result_path in sorted(result_dir.rglob("*.json")):
@@ -176,6 +181,8 @@ def benchmark_api(
         typer.Option("--verbose/--quiet", help="Print per-video benchmark progress."),
     ] = True,
 ) -> None:
+    from accident_vlm.benchmark import BenchmarkOptions, run_api_benchmark
+
     report = run_api_benchmark(
         BenchmarkOptions(
             api_base_url=api_base_url,
