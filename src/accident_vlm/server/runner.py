@@ -8,10 +8,35 @@ from accident_vlm.config import PipelineConfig
 from accident_vlm.modules.vlm_composer import compose_final_facts, get_qwen_backend, write_final_facts
 from accident_vlm.pipeline import analyze_video_pre_vlm
 from accident_vlm.server.job_store import JobStore
-from accident_vlm.server.schemas import AnalysisMode, AnalysisOptions
+from accident_vlm.server.schemas import AnalysisMode, AnalysisOptions, AnalysisSpeedMode
 
 
 def config_from_options(options: AnalysisOptions, output_dir: Path) -> PipelineConfig:
+    if options.speed_mode == AnalysisSpeedMode.FAST:
+        return PipelineConfig(
+            output_dir=output_dir,
+            regular_frame_interval_sec=1.0,
+            max_selected_frames=8,
+            enable_ocr=False,
+            enable_motion_keyframes=False,
+            enable_scene_analysis=False,
+            enable_actor_tracking=False,
+            enable_segment_tracking=False,
+            enable_road_geometry=False,
+            enable_speed_distance=False,
+            enable_traffic_control=False,
+            enable_event_detection=False,
+            enable_event_scan=False,
+            enable_input_quality=False,
+            enable_contact_sheet=False,
+            ocr_backend="none",
+            object_detector_backend="none",
+            object_detector_model=options.object_detector_model,
+            qwen_model_id=options.qwen_model_id,
+            device=options.device,
+            enable_vlm=options.mode == AnalysisMode.FULL,
+            vlm_frame_budget=8,
+        )
     return PipelineConfig(
         output_dir=output_dir,
         regular_frame_interval_sec=options.regular_frame_interval_sec,

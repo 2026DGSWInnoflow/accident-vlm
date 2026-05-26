@@ -59,3 +59,28 @@ def test_config_from_options_maps_extended_pipeline_options(tmp_path: Path) -> N
     assert config.pre_event_window_sec == 4.0
     assert config.post_event_window_sec == 2.0
     assert config.lane_width_m == 3.5
+
+
+def test_config_from_options_fast_mode_disables_expensive_preprocessing(tmp_path: Path) -> None:
+    config = config_from_options(
+        AnalysisOptions(speed_mode="fast"),
+        output_dir=tmp_path,
+    )
+
+    assert config.output_dir == tmp_path
+    assert config.ocr_backend == "none"
+    assert config.object_detector_backend == "none"
+    assert config.enable_ocr is False
+    assert config.enable_actor_tracking is False
+    assert config.enable_segment_tracking is False
+    assert config.enable_motion_keyframes is False
+    assert config.enable_event_scan is False
+    assert config.enable_event_detection is False
+    assert config.enable_road_geometry is False
+    assert config.enable_traffic_control is False
+    assert config.enable_scene_analysis is False
+    assert config.enable_speed_distance is False
+    assert config.enable_input_quality is False
+    assert config.enable_contact_sheet is False
+    assert config.max_selected_frames == 8
+    assert config.vlm_frame_budget == 8

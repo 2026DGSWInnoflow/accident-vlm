@@ -29,6 +29,11 @@ class AnalysisMode(StrEnum):
     FULL = "full"
 
 
+class AnalysisSpeedMode(StrEnum):
+    QUALITY = "quality"
+    FAST = "fast"
+
+
 class JobStatus(StrEnum):
     QUEUED = "queued"
     RUNNING = "running"
@@ -38,6 +43,7 @@ class JobStatus(StrEnum):
 
 class AnalysisOptions(BaseModel):
     mode: AnalysisMode = AnalysisMode.PRE_VLM
+    speed_mode: AnalysisSpeedMode = AnalysisSpeedMode.QUALITY
     enable_ocr: bool = False
     ocr_backend: str = "auto"
     object_detector_backend: str = QUALITY_OBJECT_DETECTOR_BACKEND

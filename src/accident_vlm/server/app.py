@@ -26,6 +26,7 @@ from accident_vlm.server.runner import run_analysis_job
 from accident_vlm.server.schemas import (
     AnalysisMode,
     AnalysisOptions,
+    AnalysisSpeedMode,
     JobCreatedResponse,
     JobRecord,
     JobStatus,
@@ -63,6 +64,7 @@ def create_app(job_root: Path = Path("outputs/api_jobs")) -> FastAPI:
         background_tasks: BackgroundTasks,
         file: UploadFile = File(...),
         mode: AnalysisMode = Form(AnalysisMode.PRE_VLM),
+        speed_mode: AnalysisSpeedMode = Form(AnalysisSpeedMode.QUALITY),
         enable_ocr: bool = Form(False),
         ocr_backend: str = Form("auto"),
         object_detector_backend: str = Form(QUALITY_OBJECT_DETECTOR_BACKEND),
@@ -86,6 +88,7 @@ def create_app(job_root: Path = Path("outputs/api_jobs")) -> FastAPI:
     ) -> JobCreatedResponse:
         options = AnalysisOptions(
             mode=mode,
+            speed_mode=speed_mode,
             enable_ocr=enable_ocr,
             ocr_backend=ocr_backend,
             object_detector_backend=object_detector_backend,
