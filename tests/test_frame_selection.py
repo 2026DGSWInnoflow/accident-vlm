@@ -410,3 +410,36 @@ def test_extract_selected_frames_skips_existing_outputs(monkeypatch, tmp_path) -
         str(existing_path),
         str(output_dir / "frame_000005.jpg"),
     ]
+
+
+def test_extract_selected_frames_reuses_fresh_output_even_without_frame_path(monkeypatch, tmp_path) -> None:
+    from accident_vlm.modules.frame_selection import extract_selected_frames
+
+    video_path = tmp_path / "fake.mp4"
+    video_path.write_bytes(b"video")
+    output_dir = tmp_path / "frames"
+    output_dir.mkdir()
+    existing_path = output_dir / "frame_000002.jpg"
+    existing_path.write_bytes(b"already extracted")
+    captures = []
+
+    class FakeCapture:
+        def __init__(self, path):
+            captures.append(path)
+
+        def isOpened(self):
+            return True
+
+        def release(self):
+            pass
+
+    monkeypatch.setattr(cv2, "VideoCapture", FakeCapture)
+
+    selected = [
+        SelectedFrame(id="frame_000002", time="00:00.200", frame_index=2, purpose="a"),
+    ]
+
+    extracted = extract_selected_frames(video_path, selected, output_dir)
+
+    assert captures == []
+    assert extracted[0].path == str(existing_path)

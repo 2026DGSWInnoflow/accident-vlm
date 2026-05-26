@@ -281,10 +281,11 @@ def extract_selected_frames(
     output_dir.mkdir(parents=True, exist_ok=True)
     extracted_by_id: dict[str, SelectedFrame] = {}
     frames_to_extract: list[SelectedFrame] = []
+    video_mtime_ns = _safe_mtime_ns(video_path)
     for frame in selected_frames:
         frame_path = output_dir / f"{frame.id}.jpg"
-        if frame.path and Path(frame.path) == frame_path and frame_path.exists():
-            extracted_by_id[frame.id] = frame
+        if _is_reusable_frame_path(frame_path, video_mtime_ns):
+            extracted_by_id[frame.id] = frame.model_copy(update={"path": str(frame_path)})
         else:
             frames_to_extract.append(frame)
 
@@ -314,3 +315,18 @@ def extract_selected_frames(
     finally:
         capture.release()
     return [extracted_by_id[frame.id] for frame in selected_frames if frame.id in extracted_by_id]
+
+
+def _safe_mtime_ns(path: Path) -> int | None:
+    try:
+        return path.stat().st_mtime_ns
+    except OSError:
+        return None
+
+
+def _is_reusable_frame_path(frame_path: Path, video_mtime_ns: int | None) -> bool:
+    try:
+        frame_mtime_ns = frame_path.stat().st_mtime_ns
+    except OSError:
+        return False
+    return video_mtime_ns is None or frame_mtime_ns >= video_mtime_ns
