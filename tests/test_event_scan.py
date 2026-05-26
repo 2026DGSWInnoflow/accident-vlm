@@ -271,3 +271,42 @@ def test_scan_video_event_candidates_uses_compact_flow_frames(monkeypatch, tmp_p
     assert candidates
     assert flow_shapes
     assert all(height <= 54 and width <= 96 for height, width in flow_shapes)
+
+
+def test_scan_video_event_candidates_skips_flow_for_static_frames(monkeypatch, tmp_path):
+    video_path = tmp_path / "static.mp4"
+    writer = cv2.VideoWriter(
+        str(video_path),
+        cv2.VideoWriter_fourcc(*"mp4v"),
+        30,
+        (96, 64),
+    )
+    image = np.full((64, 96, 3), 48, dtype=np.uint8)
+    for _ in range(60):
+        writer.write(image)
+    writer.release()
+    metadata = VideoMetadata(
+        duration_sec=2.0,
+        fps=30,
+        resolution="96x64",
+        frame_count=60,
+        has_audio=False,
+    )
+    flow_calls = []
+
+    def fail_flow(*args, **kwargs):
+        flow_calls.append(1)
+        raise AssertionError("static frame pairs should not run optical flow")
+
+    monkeypatch.setattr(cv2, "calcOpticalFlowFarneback", fail_flow)
+
+    candidates = scan_video_event_candidates(
+        video_path,
+        metadata,
+        sample_fps=5.0,
+        top_k=3,
+        min_score=1.0,
+    )
+
+    assert candidates == []
+    assert flow_calls == []

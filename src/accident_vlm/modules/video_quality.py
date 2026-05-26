@@ -10,6 +10,8 @@ from accident_vlm.modules.video_sampling import iter_capture_frames_at_indices
 from accident_vlm.schemas.preprocessing import InputQuality, SelectedFrame
 from accident_vlm.utils.timecode import parse_timecode
 
+_MOTION_FLOW_SKIP_DIFF_THRESHOLD = 0.5
+
 
 def _bucket(value: float, low: float, high: float, labels: tuple[str, str, str]) -> str:
     if value < low:
@@ -66,20 +68,21 @@ def analyze_input_quality(
         motion_score = 0.0
         compensated_motion_score = 0.0
         if previous_motion_gray is not None:
-            flow = cv2.calcOpticalFlowFarneback(
-                previous_motion_gray,
-                motion_gray,
-                None,
-                0.5,
-                3,
-                15,
-                3,
-                5,
-                1.2,
-                0,
-            )
-            motion_score = float(np.linalg.norm(flow, axis=2).mean())
-            compensated_motion_score = _ego_motion_compensated_delta(previous_motion_gray, motion_gray)
+            if not _can_skip_motion_flow(previous_motion_gray, motion_gray):
+                flow = cv2.calcOpticalFlowFarneback(
+                    previous_motion_gray,
+                    motion_gray,
+                    None,
+                    0.5,
+                    3,
+                    15,
+                    3,
+                    5,
+                    1.2,
+                    0,
+                )
+                motion_score = float(np.linalg.norm(flow, axis=2).mean())
+                compensated_motion_score = _ego_motion_compensated_delta(previous_motion_gray, motion_gray)
             motion_scores.append(motion_score)
             compensated_motion_scores.append(compensated_motion_score)
             motion_observations.append(
@@ -175,6 +178,10 @@ def analyze_input_quality(
         segment_quality=_segment_quality(event_windows or [], timeline),
         visibility_conditions=visibility_conditions,
     )
+
+
+def _can_skip_motion_flow(previous_gray: np.ndarray, gray: np.ndarray) -> bool:
+    return float(cv2.absdiff(previous_gray, gray).mean()) < _MOTION_FLOW_SKIP_DIFF_THRESHOLD
 
 
 def _ego_motion_compensated_delta(previous_gray: np.ndarray, gray: np.ndarray) -> float:

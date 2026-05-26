@@ -230,3 +230,49 @@ def test_analyze_input_quality_avoids_numpy_percentile_for_contrast(monkeypatch,
     )
 
     assert quality.timeline[0]["contrast_score"] > 0
+
+
+def test_analyze_input_quality_skips_motion_flow_for_static_frames(monkeypatch, tmp_path) -> None:
+    frames = [np.full((48, 64, 3), 72, dtype=np.uint8) for _ in range(3)]
+
+    class FakeCapture:
+        def __init__(self, path):
+            self.index = 0
+
+        def isOpened(self):
+            return True
+
+        def grab(self):
+            self.index += 1
+            return self.index <= len(frames)
+
+        def read(self):
+            if self.index >= len(frames):
+                return False, None
+            image = frames[self.index]
+            self.index += 1
+            return True, image
+
+        def release(self):
+            pass
+
+    flow_calls = []
+
+    def fail_flow(*args, **kwargs):
+        flow_calls.append(1)
+        raise AssertionError("static frame pairs should not run motion flow")
+
+    monkeypatch.setattr(cv2, "VideoCapture", FakeCapture)
+    monkeypatch.setattr(cv2, "calcOpticalFlowFarneback", fail_flow)
+    monkeypatch.setattr(cv2, "calcOpticalFlowPyrLK", fail_flow)
+
+    quality = analyze_input_quality(
+        tmp_path / "fake.mp4",
+        [
+            SelectedFrame(id=f"frame_{index:06d}", time=f"00:00.{index}00", frame_index=index, purpose="a")
+            for index in range(3)
+        ],
+    )
+
+    assert quality.camera_shake_score["value"] == 0.0
+    assert flow_calls == []

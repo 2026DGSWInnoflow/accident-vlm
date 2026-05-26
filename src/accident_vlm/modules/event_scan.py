@@ -12,6 +12,8 @@ from accident_vlm.utils.timecode import frame_to_timecode, parse_timecode, secon
 from accident_vlm.modules.video_sampling import iter_sampled_capture_frames
 
 _EVENT_SCAN_FLOW_SIZE = (96, 54)
+_FLOW_SKIP_FRAME_DIFF_THRESHOLD = 1.0
+_FLOW_SKIP_HISTOGRAM_CHANGE_THRESHOLD = 1.0
 
 
 def scan_video_event_candidates(
@@ -58,30 +60,34 @@ def scan_video_event_candidates(
                 previous_frame_index = frame_index
                 continue
 
-            frame_diff = float(cv2.absdiff(small_gray, previous_gray).mean())
-            flow = cv2.calcOpticalFlowFarneback(
-                previous_gray,
-                small_gray,
-                None,
-                0.5,
-                3,
-                15,
-                3,
-                5,
-                1.2,
-                0,
-            )
-            flow_magnitude = np.linalg.norm(flow, axis=2)
-            optical_flow_peak = _fast_percentile_value(flow_magnitude, 95.0)
-            optical_flow_mean = float(flow_magnitude.mean())
             correlation = float(cv2.compareHist(previous_hist, hist, cv2.HISTCMP_CORREL))
             histogram_change = max(0.0, 1.0 - correlation) * 100.0
-            score = _event_scan_score(frame_diff, optical_flow_peak, optical_flow_mean, histogram_change)
             bbox_area_change = (
                 float(bbox_area_change_by_frame.get(frame_index, 0.0))
                 if bbox_area_change_by_frame
                 else 0.0
             )
+            frame_diff = float(cv2.absdiff(small_gray, previous_gray).mean())
+            if _can_skip_flow(frame_diff, histogram_change, bbox_area_change):
+                optical_flow_peak = 0.0
+                optical_flow_mean = 0.0
+            else:
+                flow = cv2.calcOpticalFlowFarneback(
+                    previous_gray,
+                    small_gray,
+                    None,
+                    0.5,
+                    3,
+                    15,
+                    3,
+                    5,
+                    1.2,
+                    0,
+                )
+                flow_magnitude = np.linalg.norm(flow, axis=2)
+                optical_flow_peak = _fast_percentile_value(flow_magnitude, 95.0)
+                optical_flow_mean = float(flow_magnitude.mean())
+            score = _event_scan_score(frame_diff, optical_flow_peak, optical_flow_mean, histogram_change)
             if bbox_area_change:
                 score = max(0, min(100, int(round(score + min(25.0, bbox_area_change * 10.0)))))
             if score >= min_score:
@@ -117,6 +123,14 @@ def _event_scan_score(
 ) -> int:
     score = frame_diff * 1.4 + optical_flow_peak * 7.0 + optical_flow_mean * 3.0 + histogram_change * 0.9
     return max(0, min(100, int(round(score))))
+
+
+def _can_skip_flow(frame_diff: float, histogram_change: float, bbox_area_change: float) -> bool:
+    return (
+        bbox_area_change <= 0
+        and frame_diff < _FLOW_SKIP_FRAME_DIFF_THRESHOLD
+        and histogram_change < _FLOW_SKIP_HISTOGRAM_CHANGE_THRESHOLD
+    )
 
 
 def _fast_percentile_value(values: np.ndarray, percentile: float) -> float:
