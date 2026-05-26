@@ -8,6 +8,7 @@ from typing import Any
 import cv2
 import numpy as np
 
+from accident_vlm.modules.image_metrics import gray_percentile_range
 from accident_vlm.modules.image_io import read_cv_image
 
 
@@ -91,7 +92,7 @@ def assess_evidence_image_quality(path: Any) -> dict[str, Any]:
     brightness_score = float(gray.mean())
     noise_score = float(gray.std())
     glare_ratio = float((gray >= 245).mean())
-    contrast_score = float(np.percentile(gray, 95) - np.percentile(gray, 5))
+    contrast_score = gray_percentile_range(gray)
     blur = "high" if blur_score < 80 else "medium" if blur_score < 300 else "low"
     brightness = "dark" if brightness_score < 65 else "overexposed" if brightness_score > 205 else "normal"
     noise = "high" if noise_score > 75 else "medium" if noise_score > 35 else "low"

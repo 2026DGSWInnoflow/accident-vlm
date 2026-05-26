@@ -5,6 +5,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from accident_vlm.modules.image_metrics import gray_percentile_range
 from accident_vlm.modules.video_sampling import iter_capture_frames_at_indices
 from accident_vlm.schemas.preprocessing import InputQuality, SelectedFrame
 from accident_vlm.utils.timecode import parse_timecode
@@ -57,7 +58,7 @@ def analyze_input_quality(
         noise_score = float(gray.std())
         glare_ratio = float((gray >= 245).mean())
         dark_ratio = float((gray <= 25).mean())
-        contrast_score = float(np.percentile(gray, 95) - np.percentile(gray, 5))
+        contrast_score = gray_percentile_range(gray)
         motion_gray = _motion_gray(gray)
         blur_scores.append(blur_score)
         brightness_scores.append(brightness_score)

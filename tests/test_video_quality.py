@@ -183,3 +183,50 @@ def test_analyze_input_quality_downscales_optical_flow_inputs(monkeypatch, tmp_p
 
     assert flow_shapes
     assert all(height <= 96 and width <= 96 for height, width in flow_shapes)
+
+
+def test_analyze_input_quality_avoids_numpy_percentile_for_contrast(monkeypatch, tmp_path) -> None:
+    frames = []
+    for index in range(2):
+        image = np.zeros((48, 64, 3), dtype=np.uint8)
+        image[:, 32:] = 180 + index * 20
+        frames.append(image)
+
+    class FakeCapture:
+        def __init__(self, path):
+            self.index = 0
+
+        def isOpened(self):
+            return True
+
+        def grab(self):
+            self.index += 1
+            return self.index <= len(frames)
+
+        def read(self):
+            if self.index >= len(frames):
+                return False, None
+            image = frames[self.index]
+            self.index += 1
+            return True, image
+
+        def release(self):
+            pass
+
+    monkeypatch.setattr(cv2, "VideoCapture", FakeCapture)
+    monkeypatch.setattr(
+        "accident_vlm.modules.video_quality.np.percentile",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("uint8 contrast should use histogram percentiles")
+        ),
+    )
+
+    quality = analyze_input_quality(
+        tmp_path / "fake.mp4",
+        [
+            SelectedFrame(id="frame_000000", time="00:00.000", frame_index=0, purpose="a"),
+            SelectedFrame(id="frame_000001", time="00:00.100", frame_index=1, purpose="a"),
+        ],
+    )
+
+    assert quality.timeline[0]["contrast_score"] > 0

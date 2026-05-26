@@ -2,6 +2,7 @@ import cv2
 import numpy as np
 
 from accident_vlm.modules.evidence_scoring import (
+    assess_evidence_image_quality,
     rank_evidence_images,
     score_evidence_image,
     summarize_evidence_images,
@@ -44,6 +45,23 @@ def test_rank_evidence_images_keeps_quality_metrics(tmp_path):
     )
 
     assert ranked[0]["evidence_quality"]["brightness"] == "normal"
+
+
+def test_assess_evidence_image_quality_avoids_numpy_percentile(monkeypatch, tmp_path):
+    image_path = tmp_path / "contrast.jpg"
+    image = np.zeros((50, 80, 3), dtype=np.uint8)
+    image[:, 40:] = 200
+    cv2.imwrite(str(image_path), image)
+    monkeypatch.setattr(
+        "accident_vlm.modules.evidence_scoring.np.percentile",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("uint8 contrast should use histogram percentiles")
+        ),
+    )
+
+    quality = assess_evidence_image_quality(image_path)
+
+    assert quality["contrast_score"] > 0
 
 
 def test_summarize_evidence_images_reuses_existing_scores(monkeypatch):
