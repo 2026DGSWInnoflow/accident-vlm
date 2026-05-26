@@ -283,14 +283,15 @@ def analyze_video_pre_vlm(
                 context.tracks,
                 run_output_dir,
             )
-        context.overlays.extend(
-            build_event_evidence_overlays(
-                context.selected_frames,
-                context.event_candidates,
-                context.tracks,
-                run_output_dir,
+        if context.event_candidates:
+            context.overlays.extend(
+                build_event_evidence_overlays(
+                    context.selected_frames,
+                    context.event_candidates,
+                    context.tracks,
+                    run_output_dir,
+                )
             )
-        )
         context.preprocessing_uncertainties = _collect_preprocessing_uncertainties(context)
         event_window_frames = select_event_window_frames(
             context.event_candidates,

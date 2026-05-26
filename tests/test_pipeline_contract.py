@@ -231,6 +231,58 @@ def test_analyze_video_pre_vlm_skips_actor_tracking_when_detector_is_none(tmp_pa
     assert context.crops == []
 
 
+def test_analyze_video_pre_vlm_skips_event_overlays_when_no_event_candidates(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "accident_vlm.pipeline.probe_video",
+        lambda video_path: VideoMetadata(
+            duration_sec=1.0,
+            fps=10,
+            resolution="640x480",
+            frame_count=10,
+            has_audio=False,
+        ),
+    )
+    monkeypatch.setattr(
+        "accident_vlm.pipeline.extract_selected_frames",
+        lambda video_path, selected_frames, output_dir: [
+            frame.model_copy(update={"path": str(tmp_path / f"{frame.id}.jpg")})
+            for frame in selected_frames
+        ],
+    )
+    monkeypatch.setattr("accident_vlm.pipeline.analyze_input_quality", lambda *args, **kwargs: None)
+    monkeypatch.setattr("accident_vlm.pipeline.detect_event_candidates", lambda *args, **kwargs: [])
+    monkeypatch.setattr("accident_vlm.pipeline.build_event_segments", lambda *args, **kwargs: [])
+    monkeypatch.setattr(
+        "accident_vlm.pipeline.build_event_evidence_overlays",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("empty event candidates should not import/build event overlays")
+        ),
+    )
+    monkeypatch.setattr(
+        "accident_vlm.pipeline.build_frame_selection_contact_sheet",
+        lambda frames, output_path, title: {"status": "skipped"},
+    )
+
+    context = analyze_video_pre_vlm(
+        tmp_path / "sample.mp4",
+        PipelineConfig(
+            output_dir=tmp_path / "outputs",
+            enable_motion_keyframes=False,
+            enable_event_scan=False,
+            enable_ocr=False,
+            enable_actor_tracking=False,
+            enable_road_geometry=False,
+            enable_speed_distance=False,
+            enable_traffic_control=False,
+            enable_scene_analysis=False,
+            enable_event_detection=True,
+        ),
+    )
+
+    assert context.event_candidates == []
+    assert context.overlays == []
+
+
 def test_build_evidence_package_is_snapshot_of_mutable_context_fields() -> None:
     context = PipelineContext(
         video_path="sample.mp4",
