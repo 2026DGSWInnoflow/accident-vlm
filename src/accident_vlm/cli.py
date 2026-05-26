@@ -11,23 +11,66 @@ def analyze_video_pre_vlm(video_path: Path, config):
     return implementation(video_path=video_path, config=config)
 
 
+def _build_analyze_config(
+    *,
+    output_dir: Path,
+    ocr_backend: str,
+    object_detector_backend: str,
+    object_detector_model: str,
+    speed_mode: str = "quality",
+):
+    from accident_vlm.config import PipelineConfig
+
+    normalized_speed_mode = speed_mode.strip().lower()
+    if normalized_speed_mode == "fast":
+        return PipelineConfig(
+            output_dir=output_dir,
+            regular_frame_interval_sec=1.0,
+            max_selected_frames=8,
+            enable_ocr=False,
+            enable_motion_keyframes=False,
+            enable_scene_analysis=False,
+            enable_actor_tracking=False,
+            enable_segment_tracking=False,
+            enable_road_geometry=False,
+            enable_speed_distance=False,
+            enable_traffic_control=False,
+            enable_event_detection=False,
+            enable_event_scan=False,
+            ocr_backend="none",
+            object_detector_backend="none",
+            object_detector_model=object_detector_model,
+            vlm_frame_budget=8,
+        )
+    if normalized_speed_mode != "quality":
+        raise ValueError("speed_mode must be 'quality' or 'fast'")
+    return PipelineConfig(
+        output_dir=output_dir,
+        ocr_backend=ocr_backend,
+        object_detector_backend=object_detector_backend,
+        object_detector_model=object_detector_model,
+    )
+
+
 def _try_fast_analyze(argv: list[str]) -> bool:
     if len(argv) < 2 or argv[1] != "analyze":
         return False
 
-    from accident_vlm.config import PipelineConfig, QUALITY_OBJECT_DETECTOR_BACKEND
+    from accident_vlm.config import QUALITY_OBJECT_DETECTOR_BACKEND
 
     options = {
         "ocr_backend": "auto",
         "object_detector_backend": QUALITY_OBJECT_DETECTOR_BACKEND,
         "object_detector_model": "yolov8x.pt",
         "output_dir": Path("outputs"),
+        "speed_mode": "quality",
     }
     option_names = {
         "--ocr-backend": ("ocr_backend", str),
         "--detector": ("object_detector_backend", str),
         "--detector-model": ("object_detector_model", str),
         "--output-dir": ("output_dir", Path),
+        "--speed-mode": ("speed_mode", str),
     }
     positional: list[str] = []
     index = 2
@@ -49,11 +92,12 @@ def _try_fast_analyze(argv: list[str]) -> bool:
 
     video_path = Path(positional[0])
     output_path = Path(positional[1]) if len(positional) == 2 else Path("outputs/pre_vlm_context.json")
-    config = PipelineConfig(
+    config = _build_analyze_config(
         output_dir=options["output_dir"],
         ocr_backend=options["ocr_backend"],
         object_detector_backend=options["object_detector_backend"],
         object_detector_model=options["object_detector_model"],
+        speed_mode=options["speed_mode"],
     )
     context = analyze_video_pre_vlm(video_path=video_path, config=config)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -123,12 +167,17 @@ def analyze(
         Path,
         typer.Option("--output-dir", help="Directory for extracted frames and module artifacts."),
     ] = Path("outputs"),
+    speed_mode: Annotated[
+        str,
+        typer.Option("--speed-mode", help="Preprocessing mode: quality or fast."),
+    ] = "quality",
 ) -> None:
-    config = PipelineConfig(
+    config = _build_analyze_config(
         output_dir=output_dir,
         ocr_backend=ocr_backend,
         object_detector_backend=object_detector_backend,
         object_detector_model=object_detector_model,
+        speed_mode=speed_mode,
     )
     context = analyze_video_pre_vlm(video_path=video_path, config=config)
     output_path.parent.mkdir(parents=True, exist_ok=True)

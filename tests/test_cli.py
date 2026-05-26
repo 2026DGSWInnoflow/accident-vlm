@@ -128,6 +128,46 @@ def test_cli_fast_analyze_path_writes_context_without_typer_dispatch(monkeypatch
     assert json.loads(output_path.read_text(encoding="utf-8"))["video_path"] == str(video_path)
 
 
+def test_cli_fast_analyze_speed_mode_fast_disables_expensive_preprocessing(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    video_path = tmp_path / "sample.mp4"
+    output_path = tmp_path / "context.json"
+    calls = {}
+
+    def fake_analyze_video_pre_vlm(video_path: Path, config):
+        calls["config"] = config
+        return PipelineContext(video_path=str(video_path))
+
+    monkeypatch.setattr("accident_vlm.cli.analyze_video_pre_vlm", fake_analyze_video_pre_vlm)
+
+    handled = cli._try_fast_analyze(
+        [
+            "accident-vlm",
+            "analyze",
+            str(video_path),
+            str(output_path),
+            "--speed-mode",
+            "fast",
+        ]
+    )
+
+    config = calls["config"]
+    assert handled is True
+    assert config.ocr_backend == "none"
+    assert config.object_detector_backend == "none"
+    assert config.enable_motion_keyframes is False
+    assert config.enable_event_scan is False
+    assert config.enable_road_geometry is False
+    assert config.enable_traffic_control is False
+    assert config.enable_scene_analysis is False
+    assert config.enable_event_detection is False
+    assert config.enable_speed_distance is False
+    assert config.max_selected_frames == 8
+    assert config.vlm_frame_budget == 8
+
+
 def test_cli_module_fast_analyze_exits_before_typer_import(tmp_path: Path) -> None:
     video_path = tmp_path / "sample.mp4"
     output_path = tmp_path / "context.json"
