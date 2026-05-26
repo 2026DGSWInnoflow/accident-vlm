@@ -42,7 +42,7 @@ def analyze_input_quality(
     compensated_motion_scores: list[float] = []
     motion_observations: list[dict] = []
     timeline: list[dict] = []
-    previous_gray: np.ndarray | None = None
+    previous_motion_gray: np.ndarray | None = None
     previous_frame: SelectedFrame | None = None
 
     frames_by_index = {frame.frame_index: frame for frame in selected_frames[:30]}
@@ -58,15 +58,16 @@ def analyze_input_quality(
         glare_ratio = float((gray >= 245).mean())
         dark_ratio = float((gray <= 25).mean())
         contrast_score = float(np.percentile(gray, 95) - np.percentile(gray, 5))
+        motion_gray = _motion_gray(gray)
         blur_scores.append(blur_score)
         brightness_scores.append(brightness_score)
         noise_scores.append(noise_score)
         motion_score = 0.0
         compensated_motion_score = 0.0
-        if previous_gray is not None:
+        if previous_motion_gray is not None:
             flow = cv2.calcOpticalFlowFarneback(
-                previous_gray,
-                gray,
+                previous_motion_gray,
+                motion_gray,
                 None,
                 0.5,
                 3,
@@ -77,7 +78,7 @@ def analyze_input_quality(
                 0,
             )
             motion_score = float(np.linalg.norm(flow, axis=2).mean())
-            compensated_motion_score = _ego_motion_compensated_delta(previous_gray, gray)
+            compensated_motion_score = _ego_motion_compensated_delta(previous_motion_gray, motion_gray)
             motion_scores.append(motion_score)
             compensated_motion_scores.append(compensated_motion_score)
             motion_observations.append(
@@ -115,7 +116,7 @@ def analyze_input_quality(
                 ),
             }
         )
-        previous_gray = gray
+        previous_motion_gray = motion_gray
         previous_frame = frame
     capture.release()
 
@@ -191,6 +192,19 @@ def _ego_motion_compensated_delta(previous_gray: np.ndarray, gray: np.ndarray) -
         return float(cv2.absdiff(previous_gray, gray).mean()) / 255.0
     warped = cv2.warpAffine(previous_gray, matrix, (gray.shape[1], gray.shape[0]))
     return float(cv2.absdiff(warped, gray).mean()) / 255.0
+
+
+def _motion_gray(gray: np.ndarray, max_side: int = 96) -> np.ndarray:
+    height, width = gray.shape[:2]
+    longest_side = max(height, width)
+    if longest_side <= max_side:
+        return gray
+    scale = max_side / longest_side
+    return cv2.resize(
+        gray,
+        (max(1, int(round(width * scale))), max(1, int(round(height * scale)))),
+        interpolation=cv2.INTER_AREA,
+    )
 
 
 def _blur_type(blur_score: float, motion_score: float, compensated_motion_score: float) -> str:

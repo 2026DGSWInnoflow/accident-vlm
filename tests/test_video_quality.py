@@ -135,3 +135,51 @@ def test_analyze_input_quality_scans_forward_without_random_seeks(monkeypatch, t
         "frame_000002",
         "frame_000005",
     ]
+
+
+def test_analyze_input_quality_downscales_optical_flow_inputs(monkeypatch, tmp_path) -> None:
+    frames = []
+    for index in range(3):
+        image = np.zeros((240, 320, 3), dtype=np.uint8)
+        cv2.rectangle(image, (40 + index * 20, 80), (120 + index * 20, 160), (255, 255, 255), -1)
+        frames.append(image)
+    flow_shapes = []
+
+    class FakeCapture:
+        def __init__(self, path):
+            self.index = 0
+
+        def isOpened(self):
+            return True
+
+        def grab(self):
+            self.index += 1
+            return self.index <= len(frames)
+
+        def read(self):
+            if self.index >= len(frames):
+                return False, None
+            image = frames[self.index]
+            self.index += 1
+            return True, image
+
+        def release(self):
+            pass
+
+    def fake_flow(previous, current, *args):
+        flow_shapes.append(previous.shape)
+        return np.ones((*previous.shape, 2), dtype=np.float32)
+
+    monkeypatch.setattr(cv2, "VideoCapture", FakeCapture)
+    monkeypatch.setattr(cv2, "calcOpticalFlowFarneback", fake_flow)
+
+    analyze_input_quality(
+        tmp_path / "fake.mp4",
+        [
+            SelectedFrame(id=f"frame_{index:06d}", time=f"00:00.{index}00", frame_index=index, purpose="a")
+            for index in range(3)
+        ],
+    )
+
+    assert flow_shapes
+    assert all(height <= 96 and width <= 96 for height, width in flow_shapes)
