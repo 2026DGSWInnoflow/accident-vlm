@@ -1,10 +1,15 @@
 # Accident VLM
 
-Accident VLM is a video fact extraction pipeline that produces objective,
-evidence-linked JSON for RAG workflows.
+Accident VLM is the VLM-stage project in a larger accident analysis flow:
+`VLM -> RAG (laws, precedents, fault standards) -> final analysis`.
+
+This repository extracts objective, evidence-linked accident facts from video
+and produces JSON for the downstream legal RAG and final analysis stages.
 
 The pipeline records observable facts and supporting evidence. It does not
-determine legal liability, fault, violations, offenders, or victims.
+determine legal liability, fault, violations, offenders, or victims; those
+questions belong to downstream RAG and final analysis stages outside this
+project.
 
 ## Architecture
 
@@ -35,7 +40,7 @@ accident-vlm analyze input.mp4 outputs/pre_vlm_context.json \
   --detector-model yolov8x.pt
 ```
 
-Generate pre-VLM evidence and final Qwen-composed accident facts:
+Generate pre-VLM evidence and VLM-stage Qwen-composed accident facts:
 
 ```bash
 accident-vlm analyze-full input.mp4 \
@@ -48,7 +53,7 @@ accident-vlm analyze-full input.mp4 \
   --device auto
 ```
 
-The final JSON is still evidence constrained: unsupported facts must remain
+The VLM-stage JSON is still evidence constrained: unsupported facts must remain
 `확인불가`, and legal judgment terms are sanitized before output.
 
 The default pipeline is quality-first. A request that does not override options
@@ -82,7 +87,7 @@ export ACCIDENT_VLM_MAX_MEMORY="0:22GiB,1:22GiB,2:22GiB,3:22GiB,cpu:64GiB"
 By default the VLM path is local Qwen3.6-35B-A3B through the Transformers
 backend. Preprocessing may scan higher-frame evidence, then the VLM receives the
 top 20 prioritized/event-window evidence images resized to a 640px max side and
-caps final JSON generation at 512 tokens. CUDA OOM retries fall back to 12
+caps VLM-stage JSON generation at 512 tokens. CUDA OOM retries fall back to 12
 images before compact text-only evidence.
 
 ```bash
@@ -153,4 +158,4 @@ curl http://localhost:8000/v1/jobs/{job_id}
 curl http://localhost:8000/v1/jobs/{job_id}/result
 ```
 
-Jobs are stored under `outputs/api_jobs/{job_id}` with intermediate and final JSON files.
+Jobs are stored under `outputs/api_jobs/{job_id}` with intermediate and VLM-stage JSON files.
