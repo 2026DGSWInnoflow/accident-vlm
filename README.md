@@ -6,6 +6,10 @@ evidence-linked JSON for RAG workflows.
 The pipeline records observable facts and supporting evidence. It does not
 determine legal liability, fault, violations, offenders, or victims.
 
+## Architecture
+
+- [한글 포트폴리오용 아키텍처 문서](docs/architecture_portfolio_ko.md)
+
 ## Server Setup
 
 Install the core package:
