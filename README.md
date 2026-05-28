@@ -8,7 +8,7 @@ determine legal liability, fault, violations, offenders, or victims.
 
 ## Architecture
 
-- [한글 포트폴리오용 아키텍처 문서](docs/architecture_portfolio_ko.md)
+- [한글 아키텍처 문서](docs/architecture_ko.md)
 
 ## Server Setup
 
